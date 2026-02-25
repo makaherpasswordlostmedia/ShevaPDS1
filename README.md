@@ -121,6 +121,3 @@ Hardware keyboard maps to PDS-1 ASCII.
 
 ---
 
-*The Imlac PDS-1 was one of the first personal interactive graphics*
-*computers. It was used for early AI research, networked gaming*
-*(Maze War, 1974 — the first FPS), and ARPANET terminal software.*
