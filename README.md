@@ -1,7 +1,6 @@
 # Imlac PDS-1 Emulator — Android
 
-Native Android app emulating the Imlac PDS-1 (1970, MIT AI Lab).
-No WebView, no HTML — pure Java + SurfaceView + Canvas.
+Native Android app emulating the Imlac PDS-1
 
 ## What's emulated
 
