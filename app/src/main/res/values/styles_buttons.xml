@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="RegStyle">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">#FFAA00</item>
+        <item name="android:textSize">9sp</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:paddingStart">6dp</item>
+        <item name="android:paddingEnd">6dp</item>
+        <item name="android:background">@drawable/reg_bg</item>
+        <item name="android:layout_marginEnd">3dp</item>
+    </style>
+
+    <style name="PanelBtn">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">30dp</item>
+        <item name="android:textColor">#AAAAAA</item>
+        <item name="android:textSize">8sp</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:paddingStart">8dp</item>
+        <item name="android:paddingEnd">8dp</item>
+        <item name="android:layout_marginEnd">3dp</item>
+        <item name="android:backgroundTint">#222222</item>
+        <item name="android:minWidth">0dp</item>
+    </style>
+
+    <style name="DemoBtn">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">30dp</item>
+        <item name="android:textColor">#4488FF</item>
+        <item name="android:textSize">8sp</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:paddingStart">6dp</item>
+        <item name="android:paddingEnd">6dp</item>
+        <item name="android:layout_marginEnd">2dp</item>
+        <item name="android:backgroundTint">#0A0A1A</item>
+        <item name="android:minWidth">0dp</item>
+    </style>
+</resources>
