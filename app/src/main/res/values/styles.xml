@@ -8,6 +8,7 @@
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
 
+    <!-- Register display chip -->
     <style name="RegStyle">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
@@ -22,6 +23,7 @@
         <item name="android:layout_marginEnd">2dp</item>
     </style>
 
+    <!-- Machine control button (PWR RST RUN HLT STP) -->
     <style name="PanelBtn">
         <item name="android:layout_width">0dp</item>
         <item name="android:layout_height">28dp</item>
@@ -37,9 +39,10 @@
         <item name="android:minHeight">0dp</item>
     </style>
 
+    <!-- Demo selector button -->
     <style name="DemoBtn">
         <item name="android:layout_width">0dp</item>
-        <item name="android:layout_height">24dp</item>
+        <item name="android:layout_height">22dp</item>
         <item name="android:layout_weight">1</item>
         <item name="android:textColor">#224488</item>
         <item name="android:textSize">7sp</item>
@@ -52,25 +55,26 @@
         <item name="android:minHeight">0dp</item>
     </style>
 
+    <!-- D-Pad directional button — NO weight (set in layout) -->
     <style name="DpadBtn">
-        <item name="android:layout_width">0dp</item>
-        <item name="android:layout_height">0dp</item>
-        <item name="android:textColor">#556655</item>
-        <item name="android:textSize">16sp</item>
-        <item name="android:backgroundTint">#0A120A</item>
+        <item name="android:textColor">#44AA55</item>
+        <item name="android:textSize">18sp</item>
+        <item name="android:backgroundTint">#0A180A</item>
+        <item name="android:layout_margin">2dp</item>
         <item name="android:minWidth">0dp</item>
         <item name="android:minHeight">0dp</item>
-        <item name="android:layout_margin">2dp</item>
+        <item name="android:padding">0dp</item>
+        <item name="android:elevation">2dp</item>
     </style>
 
+    <!-- Action button (A B C D) — NO weight (set in layout) -->
     <style name="ActionBtn">
-        <item name="android:layout_width">0dp</item>
-        <item name="android:layout_height">0dp</item>
-        <item name="android:textColor">#446644</item>
-        <item name="android:textSize">13sp</item>
+        <item name="android:textSize">16sp</item>
         <item name="android:fontFamily">monospace</item>
+        <item name="android:layout_margin">2dp</item>
         <item name="android:minWidth">0dp</item>
         <item name="android:minHeight">0dp</item>
-        <item name="android:layout_margin">2dp</item>
+        <item name="android:padding">0dp</item>
+        <item name="android:elevation">2dp</item>
     </style>
 </resources>
