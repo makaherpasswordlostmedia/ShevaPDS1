@@ -2,8 +2,8 @@ name: Build Imlac PDS-1 APK
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:          # ← allows manual trigger from GitHub UI
+    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -19,27 +19,29 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Grant execute permission to gradlew
+      # Download the real gradle-wrapper.jar (we don't commit binary files to git)
+      - name: Download gradle-wrapper.jar
+        run: |
+          mkdir -p gradle/wrapper
+          curl -fsSL \
+            "https://raw.githubusercontent.com/gradle/gradle/v8.2.0/gradle/wrapper/gradle-wrapper.jar" \
+            -o gradle/wrapper/gradle-wrapper.jar
+
+      - name: Make gradlew executable
         run: chmod +x gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Upload APK artifact
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --no-daemon --info
+
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: imlac-pds1-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
-
-      # Optional: also build release APK (unsigned)
-      - name: Build Release APK (unsigned)
-        run: ./gradlew assembleRelease --no-daemon
-
-      - name: Upload Release APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: imlac-pds1-release-unsigned
-          path: app/build/outputs/apk/release/app-release-unsigned.apk
-          retention-days: 30
-          
