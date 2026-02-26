@@ -322,7 +322,6 @@ public class EmulatorActivity extends Activity {
         {R.id.k_z,'Z'},{R.id.k_x,'X'},{R.id.k_c,'C'},{R.id.k_v,'V'},{R.id.k_b,'B'},
         {R.id.k_n,'N'},{R.id.k_m,'M'},
         {R.id.k_sp,' '},{R.id.k_ent,13},{R.id.k_bs,8},{R.id.k_esc,27},
-'},{R.id.k_bs,8},{R.id.k_esc,27},
     };
 
     @SuppressWarnings("ClickableViewAccessibility")
