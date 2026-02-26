@@ -64,13 +64,11 @@ public class MazeWarGame {
     //  PUBLIC — called each render frame from Demos.java
     // ─────────────────────────────────────────────────────────
     public void tick() {
-        // Read keyboard as fallback if controller not set
+        // Merge keyboard input with controller input (OR them together)
         int k = M.keyboard & 0x7F;
-        if (!iUp && !iDown && !iLeft && !iRight && !iFire) {
-            iUp    = (k=='W'); iDown  = (k=='S');
-            iLeft  = (k=='A'); iRight = (k=='D');
-            iFire  = (k==' ' || k=='F');
-        }
+        iUp    |= (k=='W'); iDown  |= (k=='S');
+        iLeft  |= (k=='A'); iRight |= (k=='D');
+        iFire  |= (k==' ' || k=='F');
 
         switch (state) {
             case TITLE: tickTitle(); break;
