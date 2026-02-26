@@ -522,6 +522,9 @@ public class MazeWarGame {
         // Horizon line
         vl(VIEW_X0, VIEW_CY, VIEW_X1, VIEW_CY, 0.08f);
 
+        // pdir: 0=North(+Y) 1=East(+X) 2=South(-Y) 3=West(-X)
+        double playerAngle = Math.PI / 2.0 - pdir * (Math.PI / 2.0);
+
         // ── Authentic Maze War wireframe corridor renderer ──
         // Draws wall geometry depth-by-depth, exactly like PDS-1 original:
         //   - Project each depth slice to screen trapezoid
