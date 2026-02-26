@@ -7,6 +7,11 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.*;
+import android.view.inputmethod.EditorInfo;
+import android.widget.EditText;
+import android.widget.Toast;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import android.view.ViewGroup;
 import android.widget.*;
 import java.util.List;
@@ -26,6 +31,11 @@ public class EmulatorActivity extends Activity {
     private SeekBar  sbFps;
     private int      targetFps = 30;
     private boolean  keyboardVisible = false;
+    private NetSession netSession = null;
+    private final Deque<String> chatLines = new ArrayDeque<>();
+    private static final int CHAT_MAX = 6;
+    private int  lastPeerDemo = -1;  // for demo sync detection
+    private int  syncSendCd   = 0;
     private boolean  kbdKeyHeld = false;  // for auto-release
 
     // Virtual controller
@@ -55,6 +65,8 @@ public class EmulatorActivity extends Activity {
         wireGameMenu();
         wireKeyboard();
         wireToggleInput();
+        wireMultiplayer();
+        wireChat();
         startRegUpdater();
 
         crtView.setOnTouchListener((v, ev) -> {
@@ -118,6 +130,14 @@ public class EmulatorActivity extends Activity {
                 else if (ctrl[K_A])  key=' '; else if (ctrl[K_B])  key='F';
                 else if (ctrl[K_C])  key='E'; else if (ctrl[K_D])  key='Q';
                 machine.keyboard = (key!=0) ? (key|0x8000) : 0;
+                // Send sync to peer every ~10 frames
+                if (netSession != null && netSession.isConnected()) {
+                    if (syncSendCd <= 0) {
+                        int demoIdx = demos == null ? 0 : demos.currentDemoIndex();
+                        netSession.sendSync(demoIdx, machine.keyboard);
+                        syncSendCd = 10;
+                    } else syncSendCd--;
+                }
                 // Also push directly into MazeWarGame input fields
                 if (demos != null) {
                     MazeWarGame mwg = demos.getMazeWarGame();
@@ -304,6 +324,140 @@ public class EmulatorActivity extends Activity {
         demos.setDemo(Demos.Type.USER_ASM);
         startMP();
         Toast.makeText(this, g.name+" ("+words+" words)", Toast.LENGTH_SHORT).show();
+    }
+
+    // ── Multiplayer buttons ───────────────────────────────────
+    private void wireMultiplayer() {
+        Button btnHost   = findViewById(R.id.btn_host);
+        Button btnJoin   = findViewById(R.id.btn_join);
+        Button btnCancel = findViewById(R.id.btn_netcancel);
+
+        if (btnHost != null) btnHost.setOnClickListener(v -> startHost());
+        if (btnJoin != null) btnJoin.setOnClickListener(v -> startJoin());
+        if (btnCancel != null) btnCancel.setOnClickListener(v -> stopNet());
+    }
+
+    private void startHost() {
+        if (netSession != null) netSession.stop();
+        netSession = new NetSession(this);
+        netSession.setChatListener((from, msg) -> runOnUiThread(() -> addChat(from+": "+msg)));
+        netSession.setEventListener(makeEventListener());
+        demos.setDemo(Demos.Type.MAZEWAR);
+        machine.mp_halt = true; machine.mp_run = false; startMP();
+        demos.initMazeWar();
+        long seed = (long)(Math.random() * 0xFFFFFFFFL);
+        demos.getMazeWarGame().hostMulti(netSession);  // sets listener
+        netSession.host(seed);  // starts network, onConnected will fire with seed
+        setNetStatus("⚡ HOSTING — waiting for guest...");
+        showChatPanel(true);
+        addChat("SYS: hosting on port " + NetSession.PORT_GAME);
+        Toast.makeText(this, "Hosting — waiting for guest", Toast.LENGTH_SHORT).show();
+    }
+
+    private void startJoin() {
+        if (netSession != null) netSession.stop();
+        netSession = new NetSession(this);
+        netSession.setChatListener((from, msg) -> runOnUiThread(() -> addChat(from+": "+msg)));
+        netSession.setEventListener(makeEventListener());
+        demos.setDemo(Demos.Type.MAZEWAR);
+        machine.mp_halt = true; machine.mp_run = false; startMP();
+        demos.initMazeWar();
+        demos.getMazeWarGame().joinMulti(netSession);  // sets listener
+        netSession.discover();  // starts searching
+        setNetStatus("🔍 SEARCHING for host...");
+        showChatPanel(true);
+        addChat("SYS: searching for host...");
+        Toast.makeText(this, "Searching for host...", Toast.LENGTH_SHORT).show();
+    }
+
+    private void stopNet() {
+        if (netSession != null) { netSession.stop(); netSession = null; }
+        MazeWarGame mwg = demos.getMazeWarGame();
+        if (mwg != null) mwg.stopNet();
+        setNetStatus("● OFFLINE");
+        showChatPanel(false);
+        addChat("SYS: disconnected");
+    }
+
+    private NetSession.EventListener makeEventListener() {
+        return new NetSession.EventListener() {
+            @Override public void onConnected(boolean asHost, long seed) {
+                runOnUiThread(() -> {
+                    setNetStatus(asHost ? "✓ CONNECTED — you are HOST" : "✓ CONNECTED — you are GUEST");
+                    addChat("SYS: connected! " + (asHost?"you=HOST":"you=GUEST"));
+                });
+            }
+            @Override public void onPeerSync(int demoIdx, int keyboard) {
+                // Show what demo peer is running (optional future: mirror it)
+                if (demoIdx != lastPeerDemo) {
+                    lastPeerDemo = demoIdx;
+                    runOnUiThread(() -> addChat("OPP switched demo: " + demoIdx));
+                }
+            }
+            @Override public void onPeerMazeState(int x,int y,int dir,int hp,int sc) {
+                // handled inside MazeWarGame
+            }
+            @Override public void onPeerBullet(int dir) { /* handled in MazeWarGame */ }
+            @Override public void onPeerKilled()        { /* handled in MazeWarGame */ }
+            @Override public void onDisconnected() {
+                runOnUiThread(() -> {
+                    setNetStatus("✕ DISCONNECTED");
+                    addChat("SYS: peer disconnected");
+                    Toast.makeText(EmulatorActivity.this, "Peer disconnected", Toast.LENGTH_SHORT).show();
+                });
+            }
+        };
+    }
+
+    // ── Chat ──────────────────────────────────────────────────
+    private void wireChat() {
+        Button btnSend = findViewById(R.id.btn_chat_send);
+        EditText etChat = findViewById(R.id.et_chat);
+        if (btnSend == null || etChat == null) return;
+
+        Runnable doSend = () -> {
+            String txt = etChat.getText().toString().trim();
+            if (!txt.isEmpty() && netSession != null && netSession.isConnected()) {
+                netSession.sendChat(txt);
+                etChat.setText("");
+            } else if (!txt.isEmpty()) {
+                addChat("SYS: not connected");
+                etChat.setText("");
+            }
+        };
+
+        btnSend.setOnClickListener(v -> doSend.run());
+        etChat.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_SEND
+                    || actionId == EditorInfo.IME_ACTION_DONE) {
+                doSend.run(); return true;
+            }
+            return false;
+        });
+    }
+
+    private void addChat(String line) {
+        chatLines.addLast(line);
+        while (chatLines.size() > CHAT_MAX) chatLines.removeFirst();
+        TextView tv = findViewById(R.id.tv_chat_log);
+        if (tv == null) return;
+        StringBuilder sb = new StringBuilder();
+        for (String l : chatLines) { if (sb.length()>0) sb.append("\n"); sb.append(l); }
+        tv.setText(sb.toString());
+    }
+
+    private void setNetStatus(String s) {
+        runOnUiThread(() -> {
+            TextView tv = findViewById(R.id.tv_net_status);
+            if (tv != null) tv.setText(s);
+        });
+    }
+
+    private void showChatPanel(boolean show) {
+        runOnUiThread(() -> {
+            View p = findViewById(R.id.panel_chat);
+            if (p != null) p.setVisibility(show ? View.VISIBLE : View.GONE);
+        });
     }
 
     // ── Toggle Controller / Keyboard ─────────────────────────

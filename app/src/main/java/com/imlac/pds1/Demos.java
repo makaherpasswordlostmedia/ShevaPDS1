@@ -39,6 +39,8 @@ public class Demos {
     // Maze War game instance
     private MazeWarGame mazeWarGame = null;
     public MazeWarGame getMazeWarGame() { return mazeWarGame; }
+    public int currentDemoIndex() { return currentDemo == null ? 0 : currentDemo.ordinal(); }
+    public void initMazeWar() { if(mazeWarGame==null) mazeWarGame=new MazeWarGame(M); }
 
     public Demos(Machine machine) { this.M = machine; }
 
