@@ -1,0 +1,216 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F001 /* AppDelegate.swift */; };
+		A002 /* EmulatorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F002 /* EmulatorViewController.swift */; };
+		A003 /* Machine.swift in Sources */ = {isa = PBXBuildFile; fileRef = F003 /* Machine.swift */; };
+		A004 /* Demos.swift in Sources */ = {isa = PBXBuildFile; fileRef = F004 /* Demos.swift */; };
+		A005 /* CrtView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F005 /* CrtView.swift */; };
+		A006 /* MazeWarGame.swift in Sources */ = {isa = PBXBuildFile; fileRef = F006 /* MazeWarGame.swift */; };
+		A007 /* NetSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = F007 /* NetSession.swift */; };
+		A008 /* Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = F008 /* Info.plist */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		F001 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		F002 /* EmulatorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmulatorViewController.swift; sourceTree = "<group>"; };
+		F003 /* Machine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Machine.swift; sourceTree = "<group>"; };
+		F004 /* Demos.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Demos.swift; sourceTree = "<group>"; };
+		F005 /* CrtView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrtView.swift; sourceTree = "<group>"; };
+		F006 /* MazeWarGame.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MazeWarGame.swift; sourceTree = "<group>"; };
+		F007 /* NetSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetSession.swift; sourceTree = "<group>"; };
+		F008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		PROD /* ImlacPDS1.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ImlacPDS1.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		ROOT = {
+			isa = PBXGroup;
+			children = (
+				GRPSRC /* Sources */,
+				GRPRES /* Resources */,
+				GRPPRD /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		GRPSRC = {
+			isa = PBXGroup;
+			children = (F001, F002, F003, F004, F005, F006, F007);
+			name = Sources;
+			path = ImlacPDS1/Sources;
+			sourceTree = "<group>";
+		};
+		GRPRES = {
+			isa = PBXGroup;
+			children = (F008);
+			name = Resources;
+			path = ImlacPDS1/Resources;
+			sourceTree = "<group>";
+		};
+		GRPPRD = {
+			isa = PBXGroup;
+			children = (PROD);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		TARGET /* ImlacPDS1 */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CFGLIST;
+			buildPhases = (
+				SRCSPHASE /* Sources */,
+				RESPHASE  /* Resources */,
+				FWKPHASE  /* Frameworks */,
+			);
+			buildRules = ();
+			dependencies = ();
+			name = ImlacPDS1;
+			productName = ImlacPDS1;
+			productReference = PROD /* ImlacPDS1.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		PROJECT /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				ORGANIZATIONNAME = "Imlac";
+			};
+			buildConfigurationList = PROJCFG;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base);
+			mainGroup = ROOT;
+			productRefGroup = GRPPRD /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (TARGET);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		SRCSPHASE /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (A001, A002, A003, A004, A005, A006, A007);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXResourcesBuildPhase section */
+		RESPHASE /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (A008);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		FWKPHASE /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		DBGCFG /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1","$(inherited)");
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		RELCFG /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERT = NO;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		TDBG /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_FILE = ImlacPDS1/Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)","@executable_path/Frameworks");
+				PRODUCT_BUNDLE_IDENTIFIER = com.imlac.pds1;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		TREL /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				INFOPLIST_FILE = ImlacPDS1/Resources/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)","@executable_path/Frameworks");
+				PRODUCT_BUNDLE_IDENTIFIER = com.imlac.pds1;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		PROJCFG = {
+			isa = XCConfigurationList;
+			buildConfigurations = (DBGCFG, RELCFG);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CFGLIST = {
+			isa = XCConfigurationList;
+			buildConfigurations = (TDBG, TREL);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+	};
+	rootObject = PROJECT /* Project object */;
+}
