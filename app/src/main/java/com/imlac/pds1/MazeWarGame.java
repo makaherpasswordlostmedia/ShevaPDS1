@@ -522,51 +522,103 @@ public class MazeWarGame {
         // Horizon line
         vl(VIEW_X0, VIEW_CY, VIEW_X1, VIEW_CY, 0.08f);
 
-        // Render wall columns (raycasting)
-        // pdir: 0=North(+Y) 1=East(+X) 2=South(-Y) 3=West(-X)
-        // In math convention: East=0, North=PI/2, West=PI, South=-PI/2
-        double playerAngle = Math.PI / 2.0 - pdir * (Math.PI / 2.0);
-        double colW = (double) VIEW_W / N_RAYS;
+        // ── Authentic Maze War wireframe corridor renderer ──
+        // Draws wall geometry depth-by-depth, exactly like PDS-1 original:
+        //   - Project each depth slice to screen trapezoid
+        //   - Draw back wall, left wall, right wall per cell
+        // No raycasting columns — pure geometric projection
 
-        int prevTopY = -1, prevBotY = -1, prevX = VIEW_X0;
-        double prevDist = 0;
+        // View frustum half-width at distance d: halfW(d) = VIEW_W/2 / d * 0.5
+        // Screen coords: center=(VIEW_CX, VIEW_CY), full height=VIEW_H
+        // At distance d, wall projects to height: VIEW_H / d (capped)
+        // Wall left/right edge at distance d: VIEW_CX ± VIEW_W/2/d (capped to view)
 
-        for (int col = 0; col <= N_RAYS; col++) {
-            double rayAngle = playerAngle - FOV/2.0 + ((double)col/N_RAYS) * FOV;
-            castRay(rayAngle);
+        final int MAX_DEPTH = 10;
+        final int VCX = VIEW_CX, VCY = VIEW_CY;
+        final int VH2 = VIEW_H / 2;
+        final int VW2 = VIEW_W / 2;
 
-            // Fish-eye correction
-            double corrDist = rayHit.dist * Math.cos(rayAngle - playerAngle);
-            int wallH = (int) Math.min(VIEW_H * 1.6, VIEW_H / (corrDist + 0.01));
+        // Walk forward from player, tracking left/right wall openings
+        int fx = px, fy = py;
+        int fdx = DX[pdir], fdy = DY[pdir];
+        // Right direction (relative to facing)
+        int rdx = DX[(pdir+1)%4], rdy = DY[(pdir+1)%4];
 
-            int topY    = VIEW_CY - wallH/2;
-            int botY    = VIEW_CY + wallH/2;
-            int screenX = VIEW_X0 + (int)(col * colW);
+        // Screen X edges of the open corridor at each depth
+        int prevL = VIEW_X0, prevR = VIEW_X1;
+        int prevT = VIEW_Y0, prevB = VIEW_Y1;
 
-            // Brightness based on distance and side
-            float bright = (float)(Math.min(0.95, 0.85 / (corrDist * 0.45 + 0.1)));
-            if (rayHit.side == 1) bright *= 0.55f;  // darker side walls
+        for (int depth = 1; depth <= MAX_DEPTH; depth++) {
+            int nx = fx + fdx, ny = fy + fdy;
 
-            if (col > 0) {
-                // Vertical edge lines where wall depth changes
-                if (Math.abs(rayHit.dist - prevDist) > 0.4 || col == N_RAYS) {
-                    vl(screenX, Math.max(VIEW_Y0, prevTopY),
-                       screenX, Math.min(VIEW_Y1, prevBotY), bright);
-                }
-                // Top edge (wall-ceiling boundary)
-                if (col == 1 || Math.abs(topY - prevTopY) > 2) {
-                    vl(prevX, clampY(prevTopY),
-                       screenX, clampY(topY), bright * 0.8f);
-                }
-                // Bottom edge (wall-floor boundary)
-                if (col == 1 || Math.abs(botY - prevBotY) > 2) {
-                    vl(prevX, clampY(prevBotY),
-                       screenX, clampY(botY), bright * 0.8f);
-                }
+            // Scale: at depth d, wall height = VIEW_H/d, half-width proportional
+            float scale = 1.0f / depth;
+            int wallH = Math.min(VIEW_H, (int)(VIEW_H * scale));
+            int wallW = Math.min(VIEW_W, (int)(VIEW_W * scale * 0.5f));
+
+            int topY = VCY - wallH/2;
+            int botY = VCY + wallH/2;
+            int leftX = VCX - wallW;
+            int rightX = VCX + wallW;
+
+            topY  = clampY(topY);  botY  = clampY(botY);
+            leftX = Math.max(VIEW_X0, Math.min(VIEW_X1, leftX));
+            rightX= Math.max(VIEW_X0, Math.min(VIEW_X1, rightX));
+
+            float bright = Math.max(0.15f, 1.0f - depth * 0.12f);
+
+            // ── Left wall (if no opening to the left) ──
+            if (hasWall(fx, fy, (pdir+3)%4)) {
+                // Draw left side wall: trapezoid from prev to current depth
+                vl(prevL, prevT, leftX, topY, bright);  // top edge
+                vl(prevL, prevB, leftX, botY, bright);  // bottom edge
+                vl(leftX, topY,  leftX, botY, bright);  // vertical edge
             }
 
-            prevTopY = topY; prevBotY = botY;
-            prevX = screenX; prevDist = rayHit.dist;
+            // ── Right wall (if no opening to the right) ──
+            if (hasWall(fx, fy, (pdir+1)%4)) {
+                // Draw right side wall: trapezoid
+                vl(prevR, prevT, rightX, topY, bright);
+                vl(prevR, prevB, rightX, botY, bright);
+                vl(rightX, topY, rightX, botY, bright);
+            }
+
+            // ── Front wall (if corridor blocked ahead) ──
+            if (hasWall(fx, fy, pdir) || isSolid(nx, ny)) {
+                // Draw back wall rectangle
+                vl(leftX,  topY, rightX, topY, bright);
+                vl(leftX,  botY, rightX, botY, bright);
+                vl(leftX,  topY, leftX,  botY, bright * 0.7f);
+                vl(rightX, topY, rightX, botY, bright * 0.7f);
+                break;  // can't see further
+            }
+
+            // ── Peek into side openings (left/right corridors) ──
+            // Left opening
+            if (!hasWall(fx, fy, (pdir+3)%4)) {
+                // Left corridor exists — draw its far wall stub
+                int sideD = depth + 1;
+                float sb = Math.max(0.1f, bright * 0.6f);
+                // Just draw a vertical line to suggest the side corridor
+                vl(leftX, topY, leftX, botY, sb);
+                // And a short horizontal suggesting the side wall
+                int stubX = Math.max(VIEW_X0, leftX - wallW/3);
+                vl(stubX, (topY+VCY)/2, leftX, (topY+VCY)/2, sb*0.5f);
+                vl(stubX, (botY+VCY)/2, leftX, (botY+VCY)/2, sb*0.5f);
+            }
+            // Right opening
+            if (!hasWall(fx, fy, (pdir+1)%4)) {
+                int sideD = depth + 1;
+                float sb = Math.max(0.1f, bright * 0.6f);
+                vl(rightX, topY, rightX, botY, sb);
+                int stubX = Math.min(VIEW_X1, rightX + wallW/3);
+                vl(stubX, (topY+VCY)/2, rightX, (topY+VCY)/2, sb*0.5f);
+                vl(stubX, (botY+VCY)/2, rightX, (botY+VCY)/2, sb*0.5f);
+            }
+
+            prevL = leftX; prevR = rightX;
+            prevT = topY;  prevB = botY;
+            fx = nx; fy = ny;
         }
 
         // Render enemies visible in FOV
@@ -750,6 +802,11 @@ public class MazeWarGame {
         // Compass direction (top-right corner)
         String[] dirs = {"N","E","S","W"};
         vtext(dirs[pdir], VIEW_X1 + 15, VIEW_Y1 + 20, 10, 0.6f);
+
+        // DEBUG
+        vtext(String.format("P%d,%d D%s", px,py,dirs[pdir]), VIEW_X0+8, VIEW_Y0-40, 8, 0.6f);
+        vtext(String.format("FWD:%b LT:%b RT:%b KB:%04X", kFwd,kLeft,kRight,M.keyboard), VIEW_X0+8, VIEW_Y0-60, 8, 0.6f);
+        vtext(String.format("MOV:%d TRN:%d", moveCooldown,turnCooldown), VIEW_X0+8, VIEW_Y0-80, 8, 0.6f);
 
         // Level (top)
         vtext("LV" + level, VIEW_CX - 40, VIEW_Y0 - 20, 9, 0.4f);

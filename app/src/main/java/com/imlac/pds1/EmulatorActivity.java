@@ -7,6 +7,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.*;
+import android.view.ViewGroup;
 import android.widget.*;
 import java.util.List;
 
@@ -24,6 +25,8 @@ public class EmulatorActivity extends Activity {
     private TextView tvPC, tvAC, tvIR, tvLink, tvDPX, tvDPY, tvStatus, tvFps;
     private SeekBar  sbFps;
     private int      targetFps = 30;
+    private boolean  keyboardVisible = false;
+    private boolean  kbdKeyHeld = false;  // for auto-release
 
     // Virtual controller
     private final boolean[] ctrl = new boolean[8];
@@ -50,6 +53,8 @@ public class EmulatorActivity extends Activity {
         wireControlPanel();
         wireVirtualController();
         wireGameMenu();
+        wireKeyboard();
+        wireToggleInput();
         startRegUpdater();
 
         crtView.setOnTouchListener((v, ev) -> {
@@ -166,8 +171,9 @@ public class EmulatorActivity extends Activity {
         Button btnMW = findViewById(R.id.btn_mazewar);
         if (btnMW != null) btnMW.setOnClickListener(v -> {
             demos.setDemo(Demos.Type.MAZEWAR);
-            machine.mp_halt = true;  // Maze War runs its own loop
-
+            machine.mp_halt = true;   // MP doesn't execute user code
+            machine.mp_run  = false;
+            startMP();                // but thread must run to pump keyboard
         });
     }
 
@@ -276,6 +282,68 @@ public class EmulatorActivity extends Activity {
         demos.setDemo(Demos.Type.USER_ASM);
         startMP();
         Toast.makeText(this, g.name+" ("+words+" words)", Toast.LENGTH_SHORT).show();
+    }
+
+    // ── Toggle Controller / Keyboard ─────────────────────────
+    private void wireToggleInput() {
+        Button btn = findViewById(R.id.btn_toggle_input);
+        if (btn == null) return;
+        btn.setOnClickListener(v -> {
+            keyboardVisible = !keyboardVisible;
+            View panelCtrl = findViewById(R.id.panel_controller);
+            View panelKbd  = findViewById(R.id.panel_keyboard);
+            TextView tvMode = findViewById(R.id.tv_input_mode);
+            TextView tvHint = findViewById(R.id.tv_input_hint);
+            if (keyboardVisible) {
+                panelCtrl.setVisibility(View.GONE);
+                panelKbd .setVisibility(View.VISIBLE);
+                btn.setText("🕹 PAD");
+                if (tvMode != null) tvMode.setText("KEYBOARD");
+                if (tvHint != null) tvHint.setText("tap key → sent to machine  |  auto-release 150ms");
+            } else {
+                panelCtrl.setVisibility(View.VISIBLE);
+                panelKbd .setVisibility(View.GONE);
+                btn.setText("⌨ KBD");
+                if (tvMode != null) tvMode.setText("CONTROLLER");
+                if (tvHint != null) tvHint.setText("A=SPACE  B=F  C=E  D=Q  |  ▲▼◀▶=WASD");
+            }
+        });
+    }
+
+    // ── Virtual Keyboard ──────────────────────────────────────
+    // Maps view id → ASCII character sent to machine.keyboard
+    private static final int[][] KBD_MAP = {
+        {R.id.k_1,'1'},{R.id.k_2,'2'},{R.id.k_3,'3'},{R.id.k_4,'4'},{R.id.k_5,'5'},
+        {R.id.k_6,'6'},{R.id.k_7,'7'},{R.id.k_8,'8'},{R.id.k_9,'9'},{R.id.k_0,'0'},
+        {R.id.k_q,'Q'},{R.id.k_w,'W'},{R.id.k_e,'E'},{R.id.k_r,'R'},{R.id.k_t,'T'},
+        {R.id.k_y,'Y'},{R.id.k_u,'U'},{R.id.k_i,'I'},{R.id.k_o,'O'},{R.id.k_p,'P'},
+        {R.id.k_a,'A'},{R.id.k_s,'S'},{R.id.k_d,'D'},{R.id.k_f,'F'},{R.id.k_g,'G'},
+        {R.id.k_h,'H'},{R.id.k_j,'J'},{R.id.k_k,'K'},{R.id.k_l,'L'},
+        {R.id.k_z,'Z'},{R.id.k_x,'X'},{R.id.k_c,'C'},{R.id.k_v,'V'},{R.id.k_b,'B'},
+        {R.id.k_n,'N'},{R.id.k_m,'M'},
+        {R.id.k_sp,' '},{R.id.k_ent,''},{R.id.k_bs,8},{R.id.k_esc,27},
+    };
+
+    @SuppressWarnings("ClickableViewAccessibility")
+    private void wireKeyboard() {
+        for (int[] pair : KBD_MAP) {
+            int id = pair[0];
+            int ascii = pair[1];
+            View v = findViewById(id);
+            if (v == null) continue;
+            v.setOnTouchListener((vv, ev) -> {
+                if (ev.getAction() == MotionEvent.ACTION_DOWN) {
+                    machine.keyboard = ascii | 0x8000;
+                    vv.setAlpha(0.4f);
+                    // Auto-release after 150ms
+                    uiHandler.postDelayed(() -> {
+                        machine.keyboard = 0;
+                        vv.setAlpha(1.0f);
+                    }, 150);
+                }
+                return true;
+            });
+        }
     }
 
     @Override public boolean onKeyDown(int kc, KeyEvent ev) {
