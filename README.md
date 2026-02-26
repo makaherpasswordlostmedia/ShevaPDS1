@@ -1,123 +1,51 @@
-# Imlac PDS-1 Emulator — Android
+# Imlac PDS-1 — iOS
 
-Native Android app emulating the Imlac PDS-1
+Полный порт эмулятора Imlac PDS-1 (1974) с Android на iOS, написанный на Swift + UIKit.
 
-## What's emulated
+## Файлы
 
-**Main Processor (MP)**
-- 16-bit word, 4096 words RAM
-- Full instruction set: LAW JMP DAC XAM ISP ADD AND LDA JMS IOR RAL RAR IOT OPR
-- Skip conditions: SKZ SKP SKL SKK SKD
-- IOT devices: keyboard, display control, TTY, light pen, clock
+| Файл | Описание |
+|------|---------|
+| `Machine.swift` | Ядро эмулятора — MP + DP процессоры, 4096 слов RAM |
+| `Demos.swift` | Демо-программы: звёзды, волны, Lissajous, Spacewar и др. |
+| `CrtView.swift` | Рендерер — фосфорный CRT эффект через Core Graphics |
+| `MazeWarGame.swift` | Maze War 1974 — 3D шутер с AI и мультиплеером |
+| `NetSession.swift` | UDP LAN мультиплеер по WiFi (порты 7474/7475) |
+| `EmulatorViewController.swift` | Главный экран — CRT + панель управления |
+| `AppDelegate.swift` | Точка входа приложения |
 
-**Display Processor (DP)**
-- Separate 16-bit CPU running concurrently
-- Registers: PC, AC, X, Y (1024×1024 coordinate space)
-- Instructions: DLXA DLYA DSVH DLVH DJMP DJMS DHLT DRJM DEIM DVSF DPTS
+## Сборка
 
-**Built-in demos**
-- STAR, LINES, LISSAJOUS, TEXT, BOUNCE, MAZE, SPACEWAR, SCOPE
+### Xcode (локально)
+1. Открыть `ImlacPDS1.xcodeproj`
+2. Выбрать симулятор или устройство
+3. Cmd+R
 
-**Rendering**
-- Phosphor green CRT simulation (SurfaceView)
-- Per-line glow effect (3 layers: core / inner glow / outer glow)
-- Phosphor decay between frames
-- Scanlines + vignette overlay
+### GitHub Actions CI
+Push в `main` — автоматически собирает Debug на симуляторе и Release архив.
 
----
+## Мультиплеер (Maze War LAN)
 
-## How to build
+- Оба устройства в **одной WiFi сети**
+- Нажми **HOST** на первом устройстве
+- Нажми **JOIN** на втором
+- Автоматически находят друг друга через UDP broadcast
+- Порты: 7474 (игра), 7475 (поиск)
+- Чат встроен в боковую панель
 
-### Option A — GitHub Actions (no PC needed)
+## Управление
 
-1. Fork this repo on GitHub
-2. Go to **Actions** tab
-3. Click **Build Imlac PDS-1 APK** → **Run workflow**
-4. Wait ~3 minutes
-5. Download APK from **Artifacts**
+| Кнопка | Действие |
+|--------|---------|
+| ▲ / W | Вперёд |
+| ▼ / S | Назад |
+| ◀ / A | Повернуть влево |
+| ▶ / D | Повернуть вправо |
+| B / A / SPACE | Огонь |
+| ⌨ KBD | Переключить виртуальную клавиатуру |
 
-### Option B — Android Studio
+## Требования
 
-```
-File → Open → select this folder
-Build → Build Bundle(s)/APK(s) → Build APK(s)
-```
-Requires Android Studio Hedgehog or newer.
-
-### Option C — Command line
-
-```bash
-# macOS / Linux
-./gradlew assembleDebug
-
-# Windows
-gradlew.bat assembleDebug
-```
-Output: `app/build/outputs/apk/debug/app-debug.apk`
-
-Requires: JDK 17+, Android SDK (auto-downloaded by Gradle if ANDROID_HOME not set).
-
-### Option D — Termux on Android
-
-```bash
-pkg install openjdk-17 gradle
-
-# Clone or copy project files, then:
-cd ImlacPDS1
-gradle assembleDebug
-```
-
----
-
-## Project structure
-
-```
-ImlacPDS1/
-├── app/src/main/
-│   ├── java/com/imlac/pds1/
-│   │   ├── EmulatorActivity.java   — Main activity, UI, input
-│   │   ├── Machine.java            — MP + DP emulator core
-│   │   ├── CrtView.java            — SurfaceView phosphor renderer
-│   │   └── Demos.java              — Built-in demo programs
-│   ├── res/
-│   │   ├── layout/activity_emulator.xml
-│   │   ├── values/styles.xml
-│   │   └── drawable/ic_launcher.xml
-│   └── AndroidManifest.xml
-├── .github/workflows/build.yml     — GitHub Actions CI
-├── build.gradle
-├── settings.gradle
-└── gradlew
-```
-
-## Assembler
-
-The emulator includes a two-pass assembler. Load programs at runtime
-via `Machine.assemble(String src)`.
-
-Example program:
-```asm
-        ORG     0050
-START:  CLA             ; Clear accumulator
-        LAW     42      ; Load 42
-        DAC     RESULT  ; Store to memory
-        HLT             ; Halt
-RESULT: DATA    0
-```
-
-## Controls
-
-| Button | Action |
-|--------|--------|
-| POWER | Power on, start MP |
-| RESET | Reset all registers |
-| RUN | Resume execution |
-| HALT | Stop MP |
-| STEP | Execute one instruction |
-| Demo buttons | Load demo program |
-
-Touch the CRT screen = light pen input.
-Hardware keyboard maps to PDS-1 ASCII.
-
----
-
+- iOS 15.0+
+- iPhone или iPad (landscape)
+- Xcode 15 / Swift 5.9
