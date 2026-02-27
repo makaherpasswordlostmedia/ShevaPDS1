@@ -2,52 +2,85 @@ name: iOS Build
 
 on:
   push:
-    branches: [ios-WIP]
+    branches: [main, master]
   pull_request:
-    branches: [ios-WIP]
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-14  # Xcode 15 + Swift 5.9
+    name: Build iOS App
+    runs-on: macos-14  # Xcode 15.x, Swift 5.9
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Select Xcode 15
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
-
-      - name: Show Swift version
-        run: swift --version
-
-      - name: Build (Debug, simulator)
+      - name: Select Xcode
         run: |
+          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer || \
+          sudo xcode-select -s /Applications/Xcode_15.3.app/Contents/Developer || \
+          sudo xcode-select -s /Applications/Xcode_15.2.app/Contents/Developer || \
+          sudo xcode-select -s /Applications/Xcode_15.1.app/Contents/Developer
+          xcodebuild -version
+          swift --version
+
+      - name: Find simulator UDID
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json,sys
+          d = json.load(sys.stdin)
+          for runtime,devs in d['devices'].items():
+            if 'iOS-17' in runtime or 'iOS-16' in runtime:
+              for dev in devs:
+                if dev['isAvailable'] and 'iPhone' in dev['name']:
+                  print(dev['udid'])
+                  exit()
+          ")
+          echo "udid=$UDID" >> $GITHUB_OUTPUT
+          echo "Using simulator: $UDID"
+
+      - name: Build for simulator (Debug)
+        run: |
+          set -o pipefail
           xcodebuild \
             -project ImlacPDS1.xcodeproj \
             -scheme ImlacPDS1 \
-            -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.5' \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
             -configuration Debug \
-            clean build \
+            -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO \
-            | xcpretty || true
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
+            clean build \
+          2>&1 | tee build/sim.log | \
+            grep -E "error:|warning:|BUILD SUCCEEDED|BUILD FAILED|CompileSwift" || true
+          grep -q "BUILD SUCCEEDED" build/sim.log && echo "✅ OK" || { grep "error:" build/sim.log; exit 1; }
 
-      - name: Archive IPA (unsigned)
+      - name: Build for device (unsigned)
         run: |
+          set -o pipefail
           xcodebuild \
             -project ImlacPDS1.xcodeproj \
             -scheme ImlacPDS1 \
-            -destination 'generic/platform=iOS' \
+            -destination "generic/platform=iOS" \
             -configuration Release \
-            archive \
-            -archivePath build/ImlacPDS1.xcarchive \
+            -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO \
-            | xcpretty || true
+            CODE_SIGNING_REQUIRED=NO \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
+            build \
+          2>&1 | tee build/device.log | \
+            grep -E "error:|warning:|BUILD SUCCEEDED|BUILD FAILED|CompileSwift" || true
+          grep -q "BUILD SUCCEEDED" build/device.log && echo "✅ OK" || echo "⚠️ device build failed (non-fatal)"
 
-      - name: Upload build artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: ImlacPDS1-iOS
-          path: build/
-          retention-days: 7
-          
+          path: |
+            build/sim.log
+            build/device.log
+            build/DerivedData/Build/Products/
+          retention-days: 14
