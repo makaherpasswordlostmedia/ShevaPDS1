@@ -3,7 +3,8 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#000000">
+    android:background="#000000"
+    android:fitsSystemWindows="true">
 
     <!-- ===== TOP: Main area (CRT + Control Panel) ===== -->
     <LinearLayout
@@ -40,11 +41,11 @@
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_weight="1.35"
+            android:layout_weight="1.0"
             android:orientation="vertical"
             android:background="#0A0A0A"
             android:paddingStart="5dp"
-            android:paddingEnd="5dp"
+            android:paddingEnd="50dp"
             android:paddingTop="3dp"
             android:paddingBottom="3dp">
 
@@ -80,6 +81,8 @@
                     android:id="@+id/sb_fps"
                     android:layout_width="0dp" android:layout_height="18dp"
                     android:layout_weight="1"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
                     android:max="59" android:progress="29"
                     android:progressTint="#004400" android:thumbTint="#00AA22"/>
             </LinearLayout>
