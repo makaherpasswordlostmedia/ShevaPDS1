@@ -38,6 +38,8 @@ public class Machine {
     public boolean dp_enabled = true;
     public int   dp_intensity = 7;
     public float dp_scale     = 1.0f;
+    public int   dp_start     = 0x100;  // DP program start (for frame restart)
+    public int   dp_pc_start  = 0x100;  // alias
 
     private final int[] dp_ret_stack = new int[16];
     private int         dp_ret_top   = 0;
@@ -610,12 +612,33 @@ public class Machine {
         if (name.endsWith(".hex")) {
             return loadHex(new String(data));
         } else if (name.endsWith(".rim") || name.endsWith(".tape")) {
-            return loadRim(data);
+            loadRim(data);
+            // MP bootstrap is typically at 0x050; if memory there looks like
+            // a valid MP program (not a DP instruction), use it.
+            // Otherwise fall back to 0x050 as conventional start.
+            int word50 = mem[0x050] & 0xFFFF;
+            int opc50  = (word50 >> 12) & 0xF;
+            // Valid MP opcodes: 1(LAW),2(JMP?),5(JMP),0xA(JMS),0xE(IOT),0xF(OPR)
+            // DP opcodes at 0x100+: 1(DLXA),2(DLYA),4(DLVH),5(DJMP),8(DHLT)
+            // If 0x050 contains a LAW or IOT, it's an MP bootstrap
+            if (opc50 == 1 || opc50 == 0xE || opc50 == 5 || opc50 == 0xF) {
+                return 0x050;
+            }
+            // Check if DP program at 0x100, start MP at 0x050 anyway
+            if ((mem[0x100] & 0xF000) == 0x1000 || (mem[0x100] & 0xF000) == 0x2000) {
+                // Looks like DP program — set up auto-start via IOT if 0x050 is empty
+                if (mem[0x050] == 0) {
+                    mem[0x050] = 0x1100; // LAW 0x100
+                    mem[0x051] = 0xE082; // IOT start DP
+                    mem[0x052] = 0x5052; // JMP self
+                }
+                return 0x050;
+            }
+            return 0x050;
         } else if (name.endsWith(".imlac") || name.endsWith(".asm") || name.endsWith(".s")) {
             assemble(new String(data));
             return 0x050;
         } else {
-            // Try RIM first (has recognizable structure), then flat binary
             int rimResult = loadRim(data);
             if (rimResult >= 0) return rimResult;
             return loadBin(data, 0x050) > 0 ? 0x050 : -1;

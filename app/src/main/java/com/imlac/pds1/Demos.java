@@ -8,7 +8,7 @@ package com.imlac.pds1;
 public class Demos {
 
     public enum Type {
-        LINES, STAR, LISSAJOUS, TEXT, BOUNCE, MAZE, SPACEWAR, SCOPE, USER_ASM, MAZEWAR
+        LINES, STAR, LISSAJOUS, TEXT, BOUNCE, MAZE, SPACEWAR, SCOPE, USER_ASM, MAZEWAR, SNAKE
     }
 
     private final Machine M;
@@ -57,8 +57,16 @@ public class Demos {
             case MAZE:      demoMaze();      break;
             case SPACEWAR:  demoSpacewar();  break;
             case SCOPE:     demoScope();     break;
-        case USER_ASM:  /* MP runs, display list already populated */ break;
+        case USER_ASM:
+            // Run DP program from dp_start each frame to fill display list.
+            // On real Imlac the DP runs continuously; we replay it per frame.
+            M.dp_pc   = M.dp_start;
+            M.dp_halt = false;
+            for (int i = 0; i < 8192 && !M.dp_halt; i++)
+                M.dpStep();
+            break;
         case MAZEWAR:   demoMazeWar();  break;
+        case SNAKE:     demoSnake();    break;
         }
         angle += 0.018;
         t     += 0.016;
@@ -359,6 +367,147 @@ public class Demos {
         if (mazeWarGame == null) mazeWarGame = new MazeWarGame(M);
         mazeWarGame.tick();
         mazeWarGame.draw();
+    }
+
+    // ── SNAKE ─────────────────────────────────────────────────
+    // Grid: 32x24 cells, each 32px wide, 32px tall → 1024x768 screen area
+    private static final int SN_COLS  = 30;
+    private static final int SN_ROWS  = 22;
+    private static final int SN_CELL  = 32;
+    private static final int SN_OX    = 48;   // grid origin X
+    private static final int SN_OY    = 80;   // grid origin Y
+    private static final int SN_MAX   = SN_COLS * SN_ROWS;
+
+    // Snake state
+    private int[]  snX    = new int[SN_MAX];  // body X coords (grid)
+    private int[]  snY    = new int[SN_MAX];  // body Y coords (grid)
+    private int    snLen  = 4;
+    private int    snDir  = 1;   // 0=up 1=right 2=down 3=left
+    private int    snNDir = 1;   // next direction (buffered)
+    private int    snFX   = 15, snFY = 11; // food position
+    private int    snScore = 0;
+    private boolean snDead = false;
+    private boolean snInit = false;
+    private int    snTick  = 0;
+    private static final int SN_SPEED = 8; // frames per move
+
+    private void snakeInit() {
+        snLen = 4;
+        snDir = snNDir = 1;
+        snDead = false;
+        snScore = 0;
+        snTick = 0;
+        for (int i = 0; i < snLen; i++) { snX[i] = 8 - i; snY[i] = 11; }
+        snPlaceFood();
+        snInit = true;
+    }
+
+    private void snPlaceFood() {
+        // Find empty cell
+        for (int attempt = 0; attempt < 200; attempt++) {
+            int fx = (frame * 7 + attempt * 13) % SN_COLS;
+            int fy = (frame * 11 + attempt * 17) % SN_ROWS;
+            boolean ok = true;
+            for (int i = 0; i < snLen; i++) if (snX[i]==fx && snY[i]==fy) { ok=false; break; }
+            if (ok) { snFX = fx; snFY = fy; return; }
+        }
+    }
+
+    private void demoSnake() {
+        if (!snInit) snakeInit();
+
+        // Read input (WASD)
+        int kbd = M.keyboard & 0x7F;
+        if (kbd != 0) M.keyboard = 0;
+        switch (kbd) {
+            case 'W': case 'w': if (snDir != 2) snNDir = 0; break;
+            case 'D': case 'd': if (snDir != 3) snNDir = 1; break;
+            case 'S': case 's': if (snDir != 0) snNDir = 2; break;
+            case 'A': case 'a': if (snDir != 1) snNDir = 3; break;
+            case 'R': case 'r': snakeInit(); break; // restart
+        }
+
+        // Game tick: advance snake every SN_SPEED frames
+        if (!snDead && (snTick % SN_SPEED) == 0) {
+            snDir = snNDir;
+            int nx = snX[0], ny = snY[0];
+            switch (snDir) {
+                case 0: ny++; break;
+                case 1: nx++; break;
+                case 2: ny--; break;
+                case 3: nx--; break;
+            }
+            // Wall collision
+            if (nx < 0 || nx >= SN_COLS || ny < 0 || ny >= SN_ROWS) {
+                snDead = true;
+            } else {
+                // Self collision
+                for (int i = 0; i < snLen - 1; i++) {
+                    if (snX[i] == nx && snY[i] == ny) { snDead = true; break; }
+                }
+            }
+            if (!snDead) {
+                // Ate food?
+                boolean ate = (nx == snFX && ny == snFY);
+                // Shift body
+                int newLen = ate ? snLen + 1 : snLen;
+                if (newLen > SN_MAX) newLen = SN_MAX;
+                for (int i = newLen - 1; i > 0; i--) {
+                    snX[i] = snX[i-1]; snY[i] = snY[i-1];
+                }
+                snX[0] = nx; snY[0] = ny;
+                snLen = newLen;
+                if (ate) { snScore++; snPlaceFood(); }
+            }
+        }
+        snTick++;
+
+        // ── Draw ──────────────────────────────────────────────
+
+        // Border
+        rect(SN_OX - 4, SN_OY - 4,
+             SN_COLS * SN_CELL + 8, SN_ROWS * SN_CELL + 8, 0.5f);
+
+        // Food — blinking star
+        if (!snDead && (snTick / 4) % 2 == 0) {
+            int fx = SN_OX + snFX * SN_CELL + SN_CELL/2;
+            int fy = SN_OY + snFY * SN_CELL + SN_CELL/2;
+            int r  = 10;
+            vl(fx-r, fy, fx+r, fy, 1.0f);
+            vl(fx, fy-r, fx, fy+r, 1.0f);
+            vl(fx-7, fy-7, fx+7, fy+7, 0.8f);
+            vl(fx-7, fy+7, fx+7, fy-7, 0.8f);
+        }
+
+        // Snake body — draw each segment as a square
+        for (int i = snLen - 1; i >= 0; i--) {
+            int sx = SN_OX + snX[i] * SN_CELL + 3;
+            int sy = SN_OY + snY[i] * SN_CELL + 3;
+            int sz = SN_CELL - 6;
+            float b = (i == 0) ? 1.0f : (0.9f - i * 0.015f);
+            if (b < 0.25f) b = 0.25f;
+            if (snDead) b *= 0.4f;
+
+            if (i == 0) {
+                // Head: filled box with eyes
+                rect(sx, sy, sz, sz, b);
+                // Cross inside for head
+                vl(sx+2, sy+sz/2, sx+sz-2, sy+sz/2, b*0.7f);
+                vl(sx+sz/2, sy+2, sx+sz/2, sy+sz-2, b*0.7f);
+            } else {
+                rect(sx, sy, sz, sz, b);
+            }
+        }
+
+        // HUD: score
+        vtext("SNAKE", 380, 20, 14, 0.6f);
+        vtext("SCORE:" + snScore, 40, 20, 12, 0.8f);
+        vtext("WASD=MOVE  R=RESTART", 600, 20, 9, 0.35f);
+
+        if (snDead) {
+            vtext("GAME OVER", 300, 520, 20, 1.0f);
+            vtext("PRESS R TO RESTART", 240, 480, 14, 0.7f);
+        }
     }
 
 }

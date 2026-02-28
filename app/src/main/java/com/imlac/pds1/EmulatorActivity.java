@@ -208,6 +208,13 @@ public class EmulatorActivity extends Activity {
         wireDemo(R.id.btn_demo_bounce,    Demos.Type.BOUNCE);
         wireDemo(R.id.btn_demo_maze,      Demos.Type.MAZE);
         wireDemo(R.id.btn_demo_spacewar,  Demos.Type.SPACEWAR);
+        Button btnSnake = findViewById(R.id.btn_snake);
+        if (btnSnake != null) btnSnake.setOnClickListener(v -> {
+            demos.setDemo(Demos.Type.SNAKE);
+            machine.mp_halt = true;
+            machine.mp_run  = false;
+            startMP();
+        });
         Button btnMW = findViewById(R.id.btn_mazewar);
         if (btnMW != null) btnMW.setOnClickListener(v -> {
             demos.setDemo(Demos.Type.MAZEWAR);
@@ -344,15 +351,20 @@ public class EmulatorActivity extends Activity {
             return;
         }
 
-        machine.mp_pc   = startAddr;
-        machine.mp_halt = false;
-        machine.mp_run  = true;
+        machine.mp_pc    = startAddr;
+        machine.mp_halt  = false;
+        machine.mp_run   = true;
+        // DP start: if there's a DP program at 0x100, use that
+        // Otherwise use startAddr
+        machine.dp_start = 0x100;
+        machine.dp_pc    = 0x100;
+        machine.dp_halt  = false;
         demos.setDemo(Demos.Type.USER_ASM);
         startMP();
 
         String name = filename.length() > 20 ? filename.substring(0, 20) : filename;
         Toast.makeText(this,
-            "Loaded: " + name + "\nStart: " + String.format("%04X", startAddr) + "  Size: " + bytes.length + "b",
+            "Loaded: " + name + "\nMP: " + String.format("%04X", startAddr) + "  DP: 0100  " + bytes.length + "b",
             Toast.LENGTH_LONG).show();
     }
 
