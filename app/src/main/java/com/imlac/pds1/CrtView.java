@@ -43,27 +43,14 @@ public class CrtView extends GLSurfaceView implements GLSurfaceView.Renderer {
     private int prog, aPos, aColor;
 
     // Per-frame buffers — pre-allocated, zero GC
-    private static final int MAX_VERTS = 65536; // 16384 lines * 4 floats
-    private final float[]  lineBuf  = new float[MAX_VERTS];    // x,y per vertex
-    private final float[]  lineCol  = new float[MAX_VERTS * 2];// r,g,b,a per vertex
+    private static final int MAX_VERTS = 65536;
+    private final float[]  lineBuf  = new float[MAX_VERTS];
+    private final float[]  lineCol  = new float[MAX_VERTS * 2];
     private final float[]  ptBuf    = new float[MAX_VERTS / 4];
     private final float[]  ptCol    = new float[MAX_VERTS / 2];
     private int nLine = 0, nPt = 0;
 
     private FloatBuffer vbLine, cbLine, vbPt, cbPt;
-
-    // Decay quad
-    private static final float[] QUAD = {-1,-1, 1,-1, -1,1, 1,1};
-    private FloatBuffer quadBuf;
-    private int quadProg, quadAPos, quadAlpha;
-
-    private static final String QUAD_VERT =
-        "attribute vec2 aPos;\n" +
-        "void main() { gl_Position = vec4(aPos,0.0,1.0); }\n";
-    private static final String QUAD_FRAG =
-        "precision mediump float;\n" +
-        "uniform float uAlpha;\n" +
-        "void main() { gl_FragColor = vec4(0.0,0.0,0.0,uAlpha); }\n";
 
     private volatile Machine machine;
     private volatile Demos   demos;
@@ -101,21 +88,15 @@ public class CrtView extends GLSurfaceView implements GLSurfaceView.Renderer {
         aPos   = GLES20.glGetAttribLocation(prog, "aPos");
         aColor = GLES20.glGetAttribLocation(prog, "aColor");
 
-        quadProg  = buildProg(QUAD_VERT, QUAD_FRAG);
-        quadAPos  = GLES20.glGetAttribLocation(quadProg, "aPos");
-        quadAlpha = GLES20.glGetUniformLocation(quadProg, "uAlpha");
-
         // Allocate NIO buffers (stay in native heap, zero GC)
         vbLine = allocFB(MAX_VERTS);
         cbLine = allocFB(MAX_VERTS * 2);
         vbPt   = allocFB(MAX_VERTS / 4);
         cbPt   = allocFB(MAX_VERTS / 2);
-        quadBuf = allocFB(8);
-        quadBuf.put(QUAD).position(0);
 
         GLES20.glClearColor(0f, 0f, 0f, 1f);
         GLES20.glEnable(GLES20.GL_BLEND);
-        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE); // additive — phosphor glow
+        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
     }
 
     @Override
@@ -130,22 +111,22 @@ public class CrtView extends GLSurfaceView implements GLSurfaceView.Renderer {
         Machine m = machine; Demos d = demos;
         if (m == null || d == null) { GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT); return; }
 
+        // Clear screen every frame — no accumulation artifacts
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+
         m.dlClear();
         d.runCurrentDemo();
-
-        // Phosphor decay — draw black quad with low alpha
-        drawDecay(0.15f);
 
         // Build vertex arrays
         buildBuffers(m);
 
-        // Draw lines (2 passes: glow + core)
+        // Draw glow pass (wide, semi-transparent) then core beam
         if (nLine > 0) {
-            drawVectors(false, 0.12f, 6.0f);  // outer glow
-            drawVectors(false, 1.0f,  1.5f);  // core beam
+            drawVectors(false, 6.0f);  // outer glow
+            drawVectors(false, 1.5f);  // core beam
         }
         if (nPt > 0) {
-            drawVectors(true, 1.0f, 3.0f);
+            drawVectors(true, 3.0f);
         }
 
         // FPS
@@ -164,15 +145,6 @@ public class CrtView extends GLSurfaceView implements GLSurfaceView.Renderer {
     }
 
     // ── Rendering helpers ─────────────────────────────────────
-
-    private void drawDecay(float alpha) {
-        GLES20.glUseProgram(quadProg);
-        GLES20.glUniform1f(quadAlpha, alpha);
-        GLES20.glEnableVertexAttribArray(quadAPos);
-        GLES20.glVertexAttribPointer(quadAPos, 2, GLES20.GL_FLOAT, false, 0, quadBuf);
-        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
-        GLES20.glDisableVertexAttribArray(quadAPos);
-    }
 
     private void buildBuffers(Machine m) {
         nLine = 0; nPt = 0;
@@ -218,18 +190,13 @@ public class CrtView extends GLSurfaceView implements GLSurfaceView.Renderer {
         cbPt.position(0);   cbPt.put(ptCol, 0, nPt*2).position(0);
     }
 
-    private void drawVectors(boolean points, float alphaMul, float lineWidth) {
+    private void drawVectors(boolean points, float lineWidth) {
         GLES20.glUseProgram(prog);
         GLES20.glLineWidth(lineWidth);
 
         FloatBuffer vb = points ? vbPt   : vbLine;
         FloatBuffer cb = points ? cbPt   : cbLine;
         int count      = points ? nPt/2  : nLine/2;
-
-        // Scale alpha
-        // (we multiply in the color buffer — but simpler: use uniform)
-        // For now colors already set, alphaMul applied via blending weight
-        // Easiest: just draw with GL_ONE blending so multiple passes add up
 
         GLES20.glEnableVertexAttribArray(aPos);
         GLES20.glEnableVertexAttribArray(aColor);
