@@ -546,8 +546,8 @@ public class Machine {
         if (data == null || data.length < 4) return -1;
         int startAddr = -1;
         int i = 0;
-        // Skip leader (0xFF bytes or 0x00 bytes)
-        while (i < data.length && (data[i] == (byte)0xFF || data[i] == 0x00)) i++;
+        // Skip only 0xFF leader bytes (tape leader), not 0x00
+        while (i < data.length && (data[i] & 0xFF) == 0xFF) i++;
         while (i + 3 < data.length) {
             int addr = ((data[i] & 0xFF) << 8) | (data[i+1] & 0xFF);
             int word = ((data[i+2] & 0xFF) << 8) | (data[i+3] & 0xFF);

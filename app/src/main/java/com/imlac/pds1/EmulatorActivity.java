@@ -355,13 +355,12 @@ public class EmulatorActivity extends Activity {
             return;
         }
 
-        // Find DP program start: first non-zero address >= 0x100 with DP opcode
+        // DP program conventionally starts at 0x100 on PDS-1
         int dpStart = 0x100;
-        for (int a = 0x100; a < 0x200; a++) {
-            int w = machine.mem[a] & 0xFFFF;
-            int op = (w >> 12) & 0xF;
-            if (w != 0 && (op == 1 || op == 2 || op == 4 || op == 3 || op == 8)) {
-                dpStart = a; break;
+        // Verify there's actually something there, else scan forward
+        if ((machine.mem[0x100] & 0xFFFF) == 0) {
+            for (int a = 0x100; a < 0x400; a++) {
+                if (machine.mem[a] != 0) { dpStart = a; break; }
             }
         }
         machine.dp_start = dpStart;
