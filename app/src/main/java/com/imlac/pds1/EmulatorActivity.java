@@ -13,6 +13,7 @@ import android.widget.EditText;
 import android.widget.Toast;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.util.Arrays;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import android.view.ViewGroup;
@@ -344,6 +345,9 @@ public class EmulatorActivity extends Activity {
 
     private void loadFileIntoMachine(String filename, byte[] bytes) {
         machine.reset();
+        // Clear memory completely before loading
+        java.util.Arrays.fill(machine.mem, 0);
+
         int startAddr = machine.loadAuto(filename, bytes);
 
         if (startAddr < 0) {
@@ -351,20 +355,40 @@ public class EmulatorActivity extends Activity {
             return;
         }
 
-        machine.mp_pc    = startAddr;
-        machine.mp_halt  = false;
-        machine.mp_run   = true;
-        // DP start: if there's a DP program at 0x100, use that
-        // Otherwise use startAddr
-        machine.dp_start = 0x100;
-        machine.dp_pc    = 0x100;
+        // Find DP program start: first non-zero address >= 0x100 with DP opcode
+        int dpStart = 0x100;
+        for (int a = 0x100; a < 0x200; a++) {
+            int w = machine.mem[a] & 0xFFFF;
+            int op = (w >> 12) & 0xF;
+            if (w != 0 && (op == 1 || op == 2 || op == 4 || op == 3 || op == 8)) {
+                dpStart = a; break;
+            }
+        }
+        machine.dp_start = dpStart;
+        machine.dp_pc    = dpStart;
         machine.dp_halt  = false;
+
+        // MP: only start if there's a real MP program (not just DP code at 0x050)
+        int word50 = machine.mem[0x050] & 0xFFFF;
+        int opc50  = (word50 >> 12) & 0xF;
+        boolean hasMP = word50 != 0 && opc50 != 1 && opc50 != 2 && opc50 != 4;
+        if (hasMP) {
+            machine.mp_pc   = startAddr;
+            machine.mp_halt = false;
+            machine.mp_run  = true;
+            startMP();
+        } else {
+            machine.mp_halt = true;
+            machine.mp_run  = false;
+        }
+
         demos.setDemo(Demos.Type.USER_ASM);
-        startMP();
 
         String name = filename.length() > 20 ? filename.substring(0, 20) : filename;
         Toast.makeText(this,
-            "Loaded: " + name + "\nMP: " + String.format("%04X", startAddr) + "  DP: 0100  " + bytes.length + "b",
+            "Loaded: " + name + "\nDP:" + String.format("%04X", dpStart)
+            + (hasMP ? "  MP:" + String.format("%04X", startAddr) : "  (DP only)")
+            + "  " + bytes.length + "b",
             Toast.LENGTH_LONG).show();
     }
 
