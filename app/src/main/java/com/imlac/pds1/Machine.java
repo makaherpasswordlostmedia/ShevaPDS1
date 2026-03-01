@@ -333,9 +333,9 @@ public class Machine {
                   dp_x = nx; dp_y = ny; }
                 break;
 
-            case 0x4: // DLVH — Long Vector (signed 6-bit × 8)
-                { int dx = ((word >> 6) & 0x3F) * 8;
-                  int dy =  (word       & 0x3F) * 8;
+            case 0x4: // DLVH — Long Vector (signed 5-bit × 8)
+                { int dx = ((word >> 6) & 0x1F) * 8;
+                  int dy =  (word       & 0x1F) * 8;
                   if ((word & 0x0800) != 0) dx = -dx;
                   if ((word & 0x0020) != 0) dy = -dy;
                   int nx = (dp_x + dx) & 1023;
