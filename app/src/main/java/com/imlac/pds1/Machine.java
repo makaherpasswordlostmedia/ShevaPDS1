@@ -609,39 +609,45 @@ public class Machine {
      */
     public int loadAuto(String filename, byte[] data) {
         String name = filename.toLowerCase();
-        if (name.endsWith(".hex")) {
+        boolean isRim  = name.contains(".rim") || name.contains(".tape");
+        boolean isHex  = name.endsWith(".hex") || name.endsWith(".ihex");
+        boolean isText = name.endsWith(".asm") || name.endsWith(".s")
+                      || name.endsWith(".imlac") || name.endsWith(".txt");
+
+        if (isHex) {
             return loadHex(new String(data));
-        } else if (name.endsWith(".rim") || name.endsWith(".tape")) {
-            loadRim(data);
-            // MP bootstrap is typically at 0x050; if memory there looks like
-            // a valid MP program (not a DP instruction), use it.
-            // Otherwise fall back to 0x050 as conventional start.
-            int word50 = mem[0x050] & 0xFFFF;
-            int opc50  = (word50 >> 12) & 0xF;
-            // Valid MP opcodes: 1(LAW),2(JMP?),5(JMP),0xA(JMS),0xE(IOT),0xF(OPR)
-            // DP opcodes at 0x100+: 1(DLXA),2(DLYA),4(DLVH),5(DJMP),8(DHLT)
-            // If 0x050 contains a LAW or IOT, it's an MP bootstrap
-            if (opc50 == 1 || opc50 == 0xE || opc50 == 5 || opc50 == 0xF) {
-                return 0x050;
-            }
-            // Check if DP program at 0x100, start MP at 0x050 anyway
-            if ((mem[0x100] & 0xF000) == 0x1000 || (mem[0x100] & 0xF000) == 0x2000) {
-                // Looks like DP program — set up auto-start via IOT if 0x050 is empty
-                if (mem[0x050] == 0) {
-                    mem[0x050] = 0x1100; // LAW 0x100
-                    mem[0x051] = 0xE082; // IOT start DP
-                    mem[0x052] = 0x5052; // JMP self
-                }
-                return 0x050;
-            }
-            return 0x050;
-        } else if (name.endsWith(".imlac") || name.endsWith(".asm") || name.endsWith(".s")) {
+        }
+
+        // Try to detect text assembly (starts with printable chars / semicolons)
+        if (isText || (data.length > 0 && (data[0] == ';' || data[0] == ' ' || data[0] == '\n'))) {
             assemble(new String(data));
             return 0x050;
-        } else {
-            int rimResult = loadRim(data);
-            if (rimResult >= 0) return rimResult;
-            return loadBin(data, 0x050) > 0 ? 0x050 : -1;
         }
+
+        // Binary: load as RIM
+        loadRim(data);
+
+        // Find correct MP start address:
+        // If 0x050 contains a valid MP instruction (LAW/IOT/JMP/OPR), use it
+        int word50 = mem[0x050] & 0xFFFF;
+        int opc50  = (word50 >> 12) & 0xF;
+        if (word50 != 0 && (opc50 == 1 || opc50 == 0xE || opc50 == 5 || opc50 == 0xF)) {
+            return 0x050;
+        }
+
+        // If 0x100 looks like a DP program, synthesize bootstrap at 0x050
+        int word100 = mem[0x100] & 0xFFFF;
+        int opc100  = (word100 >> 12) & 0xF;
+        if (opc100 == 1 || opc100 == 2 || opc100 == 4 || opc100 == 8) {
+            // Looks like DP instructions — write bootstrap
+            mem[0x050] = 0x1100; // LAW 0x100
+            mem[0x051] = 0xE082; // IOT start DP from AC
+            mem[0x052] = 0x5052; // JMP self (idle)
+            return 0x050;
+        }
+
+        // Fall back to flat binary at 0x050
+        if (word50 == 0) loadBin(data, 0x050);
+        return 0x050;
     }
 }
