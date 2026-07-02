@@ -64,7 +64,7 @@ final class NetSession {
         guard gameSocket >= 0 && bcastSocket >= 0 else { fail(); return }
 
         // Discovery phase — listen for guest broadcast
-        let timeout = timeval(tv_sec: 0, tv_usec: 300_000)
+        var timeout = timeval(tv_sec: 0, tv_usec: 300_000)
         setsockopt(bcastSocket, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         setsockopt(gameSocket,  SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
@@ -112,7 +112,7 @@ final class NetSession {
         gameSocket = makeUDPSocket(port: NetSession.PORT_GAME, broadcast: true)
         guard gameSocket >= 0 else { fail(); return }
 
-        let timeout = timeval(tv_sec: 0, tv_usec: 300_000)
+        var timeout = timeval(tv_sec: 0, tv_usec: 300_000)
         setsockopt(gameSocket, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
         let bcastData = makePacket(type:"D", id:1, demo:0, kbd:0, seed:0)
@@ -147,7 +147,7 @@ final class NetSession {
     //  GAME LOOP
     // ─────────────────────────────────────────────────────────
     private func gameLoop() {
-        let timeout = timeval(tv_sec: 0, tv_usec: 200_000)
+        var timeout = timeval(tv_sec: 0, tv_usec: 200_000)
         setsockopt(gameSocket, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         var buf = [UInt8](repeating:0, count:NetSession.PKT)
 
