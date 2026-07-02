@@ -14,7 +14,6 @@
 		A005 /* CrtView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F005 /* CrtView.swift */; };
 		A006 /* MazeWarGame.swift in Sources */ = {isa = PBXBuildFile; fileRef = F006 /* MazeWarGame.swift */; };
 		A007 /* NetSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = F007 /* NetSession.swift */; };
-		A008 /* Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = F008 /* Info.plist */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -114,7 +113,7 @@
 		RESPHASE /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
-			files = (A008);
+			files = ();
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
