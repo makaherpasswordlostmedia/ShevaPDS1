@@ -2,7 +2,7 @@ name: iOS Build
 
 on:
   push:
-    branches: [ios-WIP]
+    branches: [ios]
   pull_request:
     branches: [ios-WIP]
   workflow_dispatch:
