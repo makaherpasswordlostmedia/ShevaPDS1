@@ -62,6 +62,39 @@ jobs:
           2>&1 | tee build/sim.log
           grep -q "BUILD SUCCEEDED" build/sim.log && echo "✅ Build OK" || { echo "❌ Build FAILED"; grep "error:" build/sim.log | head -30; exit 1; }
 
+      - name: Build for device (Release, unsigned)
+        run: |
+          xcodebuild \
+            -project ImlacPDS1.xcodeproj \
+            -scheme ImlacPDS1 \
+            -destination "generic/platform=iOS" \
+            -configuration Release \
+            -derivedDataPath build/DerivedDataDevice \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
+            clean build \
+          2>&1 | tee build/device.log
+          grep -q "BUILD SUCCEEDED" build/device.log && echo "✅ Device build OK" || { echo "❌ Device build FAILED"; grep "error:" build/device.log | head -30; exit 1; }
+
+      - name: Package unsigned .ipa
+        run: |
+          set -e
+          APP_PATH=$(find build/DerivedDataDevice/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "No .app found in device build products"
+            find build/DerivedDataDevice/Build/Products -maxdepth 3
+            exit 1
+          fi
+          echo "Found app: $APP_PATH"
+          mkdir -p build/ipa/Payload
+          cp -R "$APP_PATH" build/ipa/Payload/
+          cd build/ipa
+          zip -r -q ../ImlacPDS1-unsigned.ipa Payload
+          cd ../..
+          echo "✅ Packaged $(ls -la build/ImlacPDS1-unsigned.ipa)"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         if: always()
@@ -69,5 +102,7 @@ jobs:
           name: ImlacPDS1-iOS
           path: |
             build/sim.log
+            build/device.log
+            build/ImlacPDS1-unsigned.ipa
             build/DerivedData/Build/Products/
           retention-days: 14
