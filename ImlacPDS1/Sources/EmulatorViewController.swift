@@ -252,7 +252,7 @@ final class EmulatorViewController: UIViewController {
             y += btnH + 2
         }
         // Special keys
-        let specials: [(String, CGFloat, CGFloat, String)] = [
+        let specials: [(String, CGFloat, CGFloat, CGFloat)] = [
             ("SPC",4,y,width*0.35-5),("ENT",width*0.35,y,width*0.3-2),
             ("BSP",width*0.65,y,width*0.35-12),("ESC",4,y+btnH+2,width-16)
         ]
