@@ -18,10 +18,16 @@ jobs:
 
       - name: Select Xcode
         run: |
-          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer 2>/dev/null || \
-          sudo xcode-select -s /Applications/Xcode_15.3.app/Contents/Developer 2>/dev/null || \
-          sudo xcode-select -s /Applications/Xcode_15.2.app/Contents/Developer 2>/dev/null || true
+          set -e
+          for v in 15.4 15.3 15.2; do
+            if [ -d "/Applications/Xcode_${v}.app" ]; then
+              sudo xcode-select -s "/Applications/Xcode_${v}.app/Contents/Developer"
+              echo "Selected Xcode ${v}"
+              break
+            fi
+          done
           xcodebuild -version
+          echo "Active developer dir: $(xcode-select -p)"
 
       - name: Create build dir
         run: mkdir -p build
@@ -32,30 +38,28 @@ jobs:
       - name: Find simulator
         id: sim
         run: |
-          # Try iOS 17 first, then 16
-          UDID=$(xcrun simctl list devices available | grep -E "iPhone [0-9]" | grep -v "unavailable" | head -1 | grep -oE "[A-F0-9-]{36}")
-          if [ -z "$UDID" ]; then
+          # Prefer a runtime that matches the active Xcode's iOS SDK, not just any listed device.
+          NAME=$(xcrun simctl list devices available | grep -E "iPhone [0-9]" | grep -v "unavailable" | head -1 | sed -E 's/^ *([^(]+) \(.*/\1/' | xargs)
+          if [ -z "$NAME" ]; then
             echo "No simulator found, listing all:"
             xcrun simctl list devices
             exit 1
           fi
-          echo "udid=$UDID" >> $GITHUB_OUTPUT
-          echo "Found simulator: $UDID"
-          xcrun simctl list devices available | grep "$UDID"
+          echo "name=$NAME" >> $GITHUB_OUTPUT
+          echo "Found simulator: $NAME"
 
       - name: Build for simulator (Debug)
         run: |
           xcodebuild \
             -project ImlacPDS1.xcodeproj \
             -scheme ImlacPDS1 \
-            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
             -configuration Debug \
             -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
             clean build \
           2>&1 | tee build/sim.log
-          # tee exits 0, check xcodebuild result via log
           grep -q "BUILD SUCCEEDED" build/sim.log && echo "✅ Build OK" || { echo "❌ Build FAILED"; grep "error:" build/sim.log | head -30; exit 1; }
 
       - name: Upload artifacts
