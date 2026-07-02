@@ -3,6 +3,19 @@
 
 import UIKit
 
+// iOS 12.5-compatible monospaced font helper.
+// UIFont.monospacedSystemFont(ofSize:weight:) requires iOS 13+, so we use
+// the Menlo monospace family (available since iOS 2) with a system-font
+// fallback in case Menlo is ever unavailable.
+func monoFont(_ size: CGFloat, weight: UIFont.Weight = .regular) -> UIFont {
+    let menloName: String
+    switch weight {
+    case .bold, .heavy, .black: menloName = "Menlo-Bold"
+    default: menloName = "Menlo-Regular"
+    }
+    return UIFont(name: menloName, size: size) ?? UIFont.systemFont(ofSize: size, weight: weight)
+}
+
 final class EmulatorViewController: UIViewController {
 
     // ── Core ──────────────────────────────────────────────────
@@ -135,7 +148,7 @@ final class EmulatorViewController: UIViewController {
         etChat = UITextField(frame: CGRect(x:0,y:0,width:panelW-50,height:20))
         etChat.backgroundColor = UIColor(white:0.05,alpha:1)
         etChat.textColor = UIColor(red:0,green:0.8,blue:0.2,alpha:1)
-        etChat.font = UIFont.monospacedSystemFont(ofSize:8, weight:.regular)
+        etChat.font = monoFont(8)
         etChat.placeholder="chat..."; etChat.returnKeyType = .send
         etChat.delegate = self; chatRow.addSubview(etChat)
         let btnSend = UIButton(type:.system)
@@ -241,7 +254,7 @@ final class EmulatorViewController: UIViewController {
                 let btn = makeButton(String(ch), textColor:UIColor(red:0,green:0.9,blue:0.3,alpha:1),
                                     bgColor:UIColor(white:0.05,alpha:1))
                 btn.frame = CGRect(x:4+CGFloat(i)*btnW, y:y, width:btnW-1, height:btnH)
-                btn.titleLabel?.font = UIFont.monospacedSystemFont(ofSize: 8, weight: .regular)
+                btn.titleLabel?.font = monoFont(8)
                 btn.layer.borderWidth = 0.5
                 btn.layer.borderColor = UIColor(white:0.2,alpha:1).cgColor
                 let c = ch
@@ -260,7 +273,7 @@ final class EmulatorViewController: UIViewController {
             let btn = makeButton(title, textColor:UIColor(red:0,green:0.9,blue:0.3,alpha:1),
                                  bgColor:UIColor(white:0.05,alpha:1))
             btn.frame = CGRect(x:x,y:sy,width:w,height:btnH)
-            btn.titleLabel?.font = UIFont.monospacedSystemFont(ofSize:7, weight:.regular)
+            btn.titleLabel?.font = monoFont(7)
             btn.accessibilityLabel = title
             btn.addTarget(self,action:#selector(kbdTap(_:)),for:.touchUpInside)
             container.addSubview(btn)
@@ -478,7 +491,7 @@ final class EmulatorViewController: UIViewController {
         btn.setTitle(title, for:.normal)
         btn.setTitleColor(textColor, for:.normal)
         btn.backgroundColor = bgColor
-        btn.titleLabel?.font = UIFont.monospacedSystemFont(ofSize:8, weight:.regular)
+        btn.titleLabel?.font = monoFont(8)
         btn.layer.cornerRadius = 3
         return btn
     }
@@ -487,7 +500,7 @@ final class EmulatorViewController: UIViewController {
         let lbl = UILabel()
         lbl.text = text
         lbl.textColor = color
-        lbl.font = UIFont.monospacedSystemFont(ofSize:size, weight:.regular)
+        lbl.font = monoFont(size)
         lbl.adjustsFontSizeToFitWidth = true
         return lbl
     }
@@ -497,7 +510,7 @@ final class EmulatorViewController: UIViewController {
         toast.text = msg
         toast.textColor = .white
         toast.backgroundColor = UIColor(white:0.1,alpha:0.9)
-        toast.font = UIFont.monospacedSystemFont(ofSize:12, weight:.regular)
+        toast.font = monoFont(12)
         toast.textAlignment = .center
         toast.layer.cornerRadius = 8; toast.clipsToBounds = true
         toast.frame = CGRect(x:20, y:view.bounds.height-80, width:view.bounds.width-40, height:36)
