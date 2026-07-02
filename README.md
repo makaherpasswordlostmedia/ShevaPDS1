@@ -22,7 +22,7 @@
 3. Cmd+R
 
 ### GitHub Actions CI
-Push в `main` — автоматически собирает Debug на симуляторе и Release архив.
+~~Push в `main` — автоматически собирает Debug на симуляторе и Release архив.~~
 
 ## Мультиплеер (Maze War LAN)
 
