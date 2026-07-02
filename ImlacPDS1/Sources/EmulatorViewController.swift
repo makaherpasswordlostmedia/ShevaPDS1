@@ -99,11 +99,11 @@ final class EmulatorViewController: UIViewController {
         // Demo buttons
         y = addButtonRow(panel, y:y, panelW:panelW,
             titles:["STAR","WAVE","LISS","TEXT","BNCE"],
-            colors:[.systemCyan,.systemCyan,.systemCyan,.systemCyan,.systemCyan],
+            colors:[UIColor(red:50/255,green:173/255,blue:230/255,alpha:1),UIColor(red:50/255,green:173/255,blue:230/255,alpha:1),UIColor(red:50/255,green:173/255,blue:230/255,alpha:1),UIColor(red:50/255,green:173/255,blue:230/255,alpha:1),UIColor(red:50/255,green:173/255,blue:230/255,alpha:1)],
             actions:[#selector(onStar),#selector(onScope),#selector(onLiss),#selector(onText),#selector(onBounce)])
         y = addButtonRow(panel, y:y, panelW:panelW,
             titles:["MAZE","WARS","SPWR","MAZE WAR","GAMES"],
-            colors:[.systemCyan,.systemCyan,.systemCyan,UIColor(red:0.1,green:0.8,blue:0.1,alpha:1),.systemBlue],
+            colors:[UIColor(red:50/255,green:173/255,blue:230/255,alpha:1),UIColor(red:50/255,green:173/255,blue:230/255,alpha:1),UIColor(red:50/255,green:173/255,blue:230/255,alpha:1),UIColor(red:0.1,green:0.8,blue:0.1,alpha:1),.systemBlue],
             actions:[#selector(onMaze),#selector(onMazeWar),#selector(onSpacewar),#selector(onMazeWar),#selector(onGames)])
 
         // Multiplayer
