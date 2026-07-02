@@ -141,7 +141,7 @@ final class CrtView: UIView {
             let b = v.bright
             if b < 0.04 { continue }
 
-            let x1 = CGFloat(v.x1) * sx
+            let x1 = sw - CGFloat(v.x1) * sx
             let y1 = sh - CGFloat(v.y1) * sy
 
             if v.isPoint {
@@ -155,7 +155,7 @@ final class CrtView: UIView {
                 ctx.setFillColor(UIColor(red:20/255, green:1.0, blue:65/255, alpha:CGFloat(b)).cgColor)
                 ctx.fillEllipse(in: CGRect(x:x1-1.2,y:y1-1.2,width:2.4,height:2.4))
             } else {
-                let x2 = CGFloat(v.x2) * sx
+                let x2 = sw - CGFloat(v.x2) * sx
                 let y2 = sh - CGFloat(v.y2) * sy
                 // Outer glow
                 ctx.setStrokeColor(UIColor(red:0, green:140/255, blue:35/255, alpha:CGFloat(b)*0.12).cgColor)
@@ -174,7 +174,7 @@ final class CrtView: UIView {
     }
 
     func screenToPDS(_ pt: CGPoint) -> (x: Int, y: Int) {
-        return (Int(pt.x / bounds.width * CGFloat(CrtView.PDS)),
+        return (Int((1 - pt.x / bounds.width) * CGFloat(CrtView.PDS)),
                 Int((1 - pt.y / bounds.height) * CGFloat(CrtView.PDS)))
     }
 }
