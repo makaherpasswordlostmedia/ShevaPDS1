@@ -101,7 +101,7 @@ final class MazeWarGame {
     //  TITLE / LOBBY / DEAD
     // ─────────────────────────────────────────────────────────
     private func tickTitle() {
-        let anyNew=(iUp||iDown||iLeft||iRight||iFire)&&!(pUp||pDown||pLeft||pRight||pFire)
+        let anyNew=(iUp||iDown||iLeft||iRight||iFire) && !(pUp||pDown||pLeft||pRight||pFire)
         if anyNew { startGame(seed: UInt64.random(in: 0...UInt64.max)) }
     }
     private func drawTitle() {
@@ -128,7 +128,7 @@ final class MazeWarGame {
         if (frame/20)%2==0 { txt("PRESS ANY BUTTON",VCX-215,VCY-70,11,0.85) }
     }
     private func tickDead() {
-        let anyNew=(iUp||iDown||iLeft||iRight||iFire)&&!(pUp||pDown||pLeft||pRight||pFire)
+        let anyNew=(iUp||iDown||iLeft||iRight||iFire) && !(pUp||pDown||pLeft||pRight||pFire)
         if anyNew { multiMode=false; state = .title }
     }
 
@@ -174,7 +174,7 @@ final class MazeWarGame {
             var ex=0,ey=0
             for _ in 0..<200 {
                 ex=2+Int.random(in:0..<MZ-4); ey=2+Int.random(in:0..<MZ-4)
-                if !solid(ex,ey)&&abs(ex-px)+abs(ey-py)>3 { break }
+                if !solid(ex,ey) && abs(ex-px)+abs(ey-py)>3 { break }
             }
             aiEnemies.append(Enemy(ex,ey,Int.random(in:0..<4)))
         }
@@ -189,19 +189,19 @@ final class MazeWarGame {
         if killFlash>0{killFlash-=1}; if msgT>0{msgT-=1}; if netHitFlash>0{netHitFlash-=1}
 
         if turnCd==0 {
-            if iLeft&&!pLeft  { pdir=(pdir+3)%4; turnCd=8 }
-            if iRight&&!pRight { pdir=(pdir+1)%4; turnCd=8 }
+            if iLeft && !pLeft  { pdir=(pdir+3)%4; turnCd=8 }
+            if iRight && !pRight { pdir=(pdir+1)%4; turnCd=8 }
         }
         if moveCd==0 {
-            if iUp&&!wall(px,py,pdir)    { px+=DX[pdir];py+=DY[pdir];moveCd=12 }
-            else if iDown&&!wall(px,py,(pdir+2)%4) { px-=DX[pdir];py-=DY[pdir];moveCd=12 }
+            if iUp && !wall(px,py,pdir)    { px+=DX[pdir];py+=DY[pdir];moveCd=12 }
+            else if iDown && !wall(px,py,(pdir+2)%4) { px-=DX[pdir];py-=DY[pdir];moveCd=12 }
         }
-        if iFire&&!pFire&&fireCd==0 {
+        if iFire && !pFire && fireCd==0 {
             bullets.append(Bullet(Double(px)+0.5,Double(py)+0.5,pdir,true))
             fireCd=20; net?.sendBullet(pdir)
         }
         tickBullets()
-        if !multiMode { tickAI(); checkWin() } else { if !netAlive&&netHitFlash<=0{netAlive=true} }
+        if !multiMode { tickAI(); checkWin() } else { if !netAlive && netHitFlash<=0{netAlive=true} }
         if multiMode, let n=net, n.isConnected() {
             if netSendCd<=0 { n.sendMazeState(px,py,pdir,hp,score); netSendCd=3 } else { netSendCd-=1 }
         }
@@ -215,16 +215,16 @@ final class MazeWarGame {
             if b.fromPlayer {
                 for e in aiEnemies {
                     guard e.alive else { continue }
-                    if abs(b.x-(Double(e.x)+0.5))<0.6&&abs(b.y-(Double(e.y)+0.5))<0.6 {
+                    if abs(b.x-(Double(e.x)+0.5))<0.6 && abs(b.y-(Double(e.y)+0.5))<0.6 {
                         e.alive=false;b.alive=false;score+=1;killFlash=12;msg="KILL";msgT=30;break
                     }
                 }
-                if multiMode&&netAlive&&abs(b.x-(Double(netX)+0.5))<0.6&&abs(b.y-(Double(netY)+0.5))<0.6 {
+                if multiMode && netAlive && abs(b.x-(Double(netX)+0.5))<0.6 && abs(b.y-(Double(netY)+0.5))<0.6 {
                     b.alive=false;netAlive=false;netHitFlash=20;score+=1
                     net?.sendKill(); msg="YOU KILLED OPPONENT!";msgT=50
                 }
             } else {
-                if abs(b.x-(Double(px)+0.5))<0.55&&abs(b.y-(Double(py)+0.5))<0.55 {
+                if abs(b.x-(Double(px)+0.5))<0.55 && abs(b.y-(Double(py)+0.5))<0.55 {
                     b.alive=false;hp-=1;hitFlash=18
                     msg=hp>0 ? "HIT! HP:\(hp)" : "YOU DIED"; msgT=45
                     if hp<=0 { state = .dead }
@@ -241,7 +241,7 @@ final class MazeWarGame {
                 e.think=15+Int.random(in:0..<25)
                 let dx=px-e.x,dy=py-e.y; var want = -1
                 if abs(dx)>abs(dy) { want=dx>0 ? 1:3 } else if dy != 0 { want=dy>0 ? 0:2 }
-                if Double.random(in:0..<1)<0.6&&want>=0&&!wall(e.x,e.y,want) {
+                if Double.random(in:0..<1)<0.6 && want>=0 && !wall(e.x,e.y,want) {
                     e.dir=want;e.x+=DX[want];e.y+=DY[want]
                 } else {
                     let ds=[0,1,2,3].shuffled()
@@ -250,10 +250,10 @@ final class MazeWarGame {
             }
             if e.fireCd<=0 {
                 var sh=false
-                if e.dir==0&&e.x==px&&py>e.y { sh=los(e.x,e.y,px,py) }
-                if e.dir==2&&e.x==px&&py<e.y { sh=los(px,py,e.x,e.y) }
-                if e.dir==1&&e.y==py&&px>e.x { sh=los(e.x,e.y,px,py) }
-                if e.dir==3&&e.y==py&&px<e.x { sh=los(px,py,e.x,e.y) }
+                if e.dir==0 && e.x==px && py>e.y { sh=los(e.x,e.y,px,py) }
+                if e.dir==2 && e.x==px && py<e.y { sh=los(px,py,e.x,e.y) }
+                if e.dir==1 && e.y==py && px>e.x { sh=los(e.x,e.y,px,py) }
+                if e.dir==3 && e.y==py && px<e.x { sh=los(px,py,e.x,e.y) }
                 if sh {
                     bullets.append(Bullet(Double(e.x)+0.5,Double(e.y)+0.5,e.dir,false))
                     e.fireCd=60+Int.random(in:0..<60)
@@ -321,22 +321,22 @@ final class MazeWarGame {
     }
     private func drawEnemiesInView() {
         for e in aiEnemies { if e.alive { drawEntityIfVisible(e.x,e.y,false) } }
-        if multiMode&&netAlive { drawEntityIfVisible(netX,netY,true) }
+        if multiMode && netAlive { drawEntityIfVisible(netX,netY,true) }
     }
     private func drawEntityIfVisible(_ ex:Int,_ ey:Int,_ isNet:Bool) {
         var relDir = -1
-        if pdir==0&&ex==px&&ey>py { relDir=0 }
-        if pdir==1&&ey==py&&ex>px { relDir=1 }
-        if pdir==2&&ex==px&&ey<py { relDir=2 }
-        if pdir==3&&ey==py&&ex<px { relDir=3 }
+        if pdir==0 && ex==px && ey>py { relDir=0 }
+        if pdir==1 && ey==py && ex>px { relDir=1 }
+        if pdir==2 && ex==px && ey<py { relDir=2 }
+        if pdir==3 && ey==py && ex<px { relDir=3 }
         guard relDir==pdir else { return }
         let dist=pdir==0||pdir==2 ? abs(ey-py) : abs(ex-px)
-        guard dist>=1&&dist<=8 else { return }
+        guard dist>=1 && dist<=8 else { return }
         for d in 0..<dist { if wall(px+DX[pdir]*d,py+DY[pdir]*d,pdir){return} }
         let sc=Float(1.4)/Float(Float(dist)+0.5)
         let sz=max(8,min(Int(Float(VH)*0.25*sc),120))
         var b=max(Float(0.3),0.9-Float(dist)*0.08)
-        if isNet&&netHitFlash>0 { b=1.0 }
+        if isNet && netHitFlash>0 { b=1.0 }
         drawEye(VCX,VCY,sz,b)
     }
     private func drawEye(_ cx:Int,_ cy:Int,_ sz:Int,_ b:Float) {
