@@ -2,7 +2,6 @@
 // Ported from NetSession.java
 
 import Foundation
-import Network
 
 // ── Event listener protocol ───────────────────────────────
 protocol NetSessionEventListener: AnyObject {
