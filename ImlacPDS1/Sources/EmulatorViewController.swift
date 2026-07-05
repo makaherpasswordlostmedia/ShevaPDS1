@@ -106,7 +106,7 @@ final class EmulatorViewController: UIViewController {
 
         // Control buttons row
         y = addButtonRow(panel, y:y, panelW:panelW, titles:["PWR","RST","RUN","HLT","STP"],
-            colors:[.systemGreen,.gray,.systemBlue,.systemRed,.gray],
+            colors:[UIColor(red:52/255,green:199/255,blue:89/255,alpha:1),.gray,UIColor(red:0,green:122/255,blue:255/255,alpha:1),UIColor(red:255/255,green:59/255,blue:48/255,alpha:1),.gray],
             actions:[#selector(onPwr),#selector(onRst),#selector(onRun),#selector(onHlt),#selector(onStp)])
 
         // Demo buttons
@@ -116,7 +116,7 @@ final class EmulatorViewController: UIViewController {
             actions:[#selector(onStar),#selector(onScope),#selector(onLiss),#selector(onText),#selector(onBounce)])
         y = addButtonRow(panel, y:y, panelW:panelW,
             titles:["MAZE","WARS","SPWR","MAZE WAR","GAMES"],
-            colors:[UIColor(red:50/255,green:173/255,blue:230/255,alpha:1),UIColor(red:50/255,green:173/255,blue:230/255,alpha:1),UIColor(red:50/255,green:173/255,blue:230/255,alpha:1),UIColor(red:0.1,green:0.8,blue:0.1,alpha:1),.systemBlue],
+            colors:[UIColor(red:50/255,green:173/255,blue:230/255,alpha:1),UIColor(red:50/255,green:173/255,blue:230/255,alpha:1),UIColor(red:50/255,green:173/255,blue:230/255,alpha:1),UIColor(red:0.1,green:0.8,blue:0.1,alpha:1),UIColor(red:0,green:122/255,blue:255/255,alpha:1)],
             actions:[#selector(onMaze),#selector(onMazeWar),#selector(onSpacewar),#selector(onMazeWar),#selector(onGames)])
 
         // Multiplayer
@@ -216,7 +216,7 @@ final class EmulatorViewController: UIViewController {
         btnRight = dpad("▶", x:cx+btnSz+4, y:cy, dir:3)
 
         // B / Fire
-        let btnB = makeButton("B", textColor:.systemBlue, bgColor:UIColor(white:0.08,alpha:1))
+        let btnB = makeButton("B", textColor:UIColor(red:0,green:122/255,blue:255/255,alpha:1), bgColor:UIColor(white:0.08,alpha:1))
         btnB.frame = CGRect(x:width-btnSz*2-8, y:cy-20, width:btnSz, height:btnSz)
         btnB.layer.cornerRadius = btnSz/2
         btnB.tag = 4
@@ -227,7 +227,7 @@ final class EmulatorViewController: UIViewController {
         container.addSubview(btnB)
 
         // A / Fire
-        let btnA = makeButton("A", textColor:.systemYellow, bgColor:UIColor(white:0.08,alpha:1))
+        let btnA = makeButton("A", textColor:UIColor(red:255/255,green:204/255,blue:0,alpha:1), bgColor:UIColor(white:0.08,alpha:1))
         btnA.frame = CGRect(x:width-btnSz-4, y:cy-20, width:btnSz, height:btnSz)
         btnA.layer.cornerRadius = btnSz/2
         btnA.tag = 5
