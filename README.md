@@ -2,7 +2,7 @@
 
 Полный порт эмулятора Imlac PDS-1 (1974) с Android на iOS, написанный на Swift + UIKit.
 
-iOS 15+!
+iOS 14.7+!(had support 12.5+ but untested)
 
 ## Файлы
 
