@@ -6,8 +6,9 @@ include $(THEOS)/makefiles/common.mk
 
 APPLICATION_NAME = ImlacPDS1
 
-ADDITIONAL_CFLAGS += -Wno-error=deprecated-module-dot-map -Wno-deprecated-module-dot-map -Wno-error=nullability-completeness -Wno-nullability-completeness
-ADDITIONAL_OBJCCFLAGS += -Wno-error=deprecated-module-dot-map -Wno-deprecated-module-dot-map -Wno-error=nullability-completeness -Wno-nullability-completeness
+ADDITIONAL_CFLAGS += -Wno-unknown-warning-option -Wno-error=unknown-warning-option -Wno-error=deprecated-module-dot-map -Wno-deprecated-module-dot-map -Wno-error=nullability-completeness -Wno-nullability-completeness
+ADDITIONAL_OBJCFLAGS += -Wno-unknown-warning-option -Wno-error=unknown-warning-option -Wno-error=deprecated-module-dot-map -Wno-deprecated-module-dot-map -Wno-error=nullability-completeness -Wno-nullability-completeness
+ADDITIONAL_OBJCCFLAGS += -Wno-unknown-warning-option -Wno-error=unknown-warning-option -Wno-error=deprecated-module-dot-map -Wno-deprecated-module-dot-map -Wno-error=nullability-completeness -Wno-nullability-completeness
 
 ImlacPDS1_FILES = \
 	ImlacPDS1/SourcesObjC/AppDelegate.m \
