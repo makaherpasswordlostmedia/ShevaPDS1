@@ -1,0 +1,120 @@
+name: Build 32-bit iOS App
+
+on:
+  push:
+    branches: [ "main", "32ios" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang lld llvm make zip perl git libpango1.0-dev libglib2.0-dev curl
+
+          # Старый Theos-toolchain (2021) собран против libtinfo.so.5,
+          # которой нет в современных Ubuntu (только libtinfo6+).
+          # Пытаемся поставить пакет напрямую, а если его больше нет в репах
+          # (обычная ситуация на ubuntu-latest), делаем симлинк на libtinfo6.
+          sudo apt-get install -y libtinfo5 || {
+            echo "::warning::libtinfo5 package unavailable, creating compat symlink to libtinfo6"
+            TINFO6=$(find /usr/lib /lib -name 'libtinfo.so.6*' 2>/dev/null | head -1)
+            if [ -n "$TINFO6" ]; then
+              sudo ln -sf "$TINFO6" /usr/lib/x86_64-linux-gnu/libtinfo.so.5
+            else
+              echo "::error::Could not locate libtinfo.so.6 to symlink"
+            fi
+          }
+          sudo ldconfig
+
+      - name: Install Theos
+        run: |
+          git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+
+      - name: Setup iOS SDK
+        run: |
+          git clone --depth=1 https://github.com/theos/sdks.git /tmp/sdks
+          cp -r /tmp/sdks/* $HOME/theos/sdks/
+          rm -rf /tmp/sdks
+
+      - name: Setup Theos Linux Toolchain
+        run: |
+          set -euo pipefail
+          export THEOS=$HOME/theos
+          sudo apt-get install -y xz-utils
+
+          echo "== Downloading toolchain =="
+          curl -fL -o /tmp/toolchain.tar.lzma \
+            https://github.com/sbingner/llvm-project/releases/latest/download/linux-ios-arm64e-clang-toolchain.tar.lzma
+
+          echo "== Downloaded file info =="
+          ls -la /tmp/toolchain.tar.lzma
+          file /tmp/toolchain.tar.lzma
+
+          echo "== Extracting =="
+          TMP=$(mktemp -d)
+          tar --lzma -xvf /tmp/toolchain.tar.lzma -C "$TMP"
+
+          echo "== Extracted contents =="
+          find "$TMP" -maxdepth 2
+
+          mkdir -p "$THEOS/toolchain/linux/iphone"
+          mv "$TMP"/ios-arm64e-clang-toolchain/* "$THEOS/toolchain/linux/iphone/"
+          rm -rf /tmp/toolchain.tar.lzma "$TMP"
+
+          echo "== Installed toolchain bin/ =="
+          ls -la "$THEOS/toolchain/linux/iphone/bin/"
+
+          echo "== ldid (bundled with toolchain) =="
+          if [ -x "$THEOS/toolchain/linux/iphone/bin/ldid" ]; then
+            sudo ln -sf "$THEOS/toolchain/linux/iphone/bin/ldid" /usr/local/bin/ldid
+            echo "Using bundled ldid: $(ldid -h 2>&1 | head -1 || true)"
+          else
+            echo "::warning::ldid not found in toolchain, trying fallback download"
+            sudo curl -fL -o /usr/local/bin/ldid \
+              https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64 \
+              || echo "::warning::ldid fallback download also failed, continuing without it"
+            sudo chmod +x /usr/local/bin/ldid || true
+          fi
+
+          echo "== Final check =="
+          test -x "$THEOS/toolchain/linux/iphone/bin/clang" && echo "clang OK: $($THEOS/toolchain/linux/iphone/bin/clang --version)"
+
+      - name: Run Build
+        run: |
+          export THEOS=$HOME/theos
+
+          if [ ! -x "$THEOS/toolchain/linux/iphone/bin/clang" ]; then
+            echo "::warning::Theos toolchain clang missing, falling back to system clang symlink"
+            mkdir -p "$THEOS/toolchain/linux/iphone/bin"
+            ln -sf "$(command -v clang)" "$THEOS/toolchain/linux/iphone/bin/clang"
+            ln -sf "$(command -v clang++)" "$THEOS/toolchain/linux/iphone/bin/clang++"
+          fi
+
+          echo "== Sanity check: can the toolchain clang actually run? =="
+          "$THEOS/toolchain/linux/iphone/bin/clang" --version
+
+          make clean
+          make FINALPACKAGE=1 ARCHS="armv7" TARGET="iphone:clang:9.3:9.0"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShevaPDS1-iOS9.3-Build
+          path: |
+            packages/
+            .theos/obj/
+            *.deb
+            *.ipa
+          retention-days: 7
