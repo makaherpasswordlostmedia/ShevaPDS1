@@ -19,7 +19,7 @@ ImlacPDS1_FILES = \
 	ImlacPDS1/SourcesObjC/NetSession.m \
 	ImlacPDS1/SourcesObjC/EmulatorViewController.m
 
-ImlacPDS1_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
+ImlacPDS1_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -marm
 ImlacPDS1_FRAMEWORKS = UIKit Foundation CoreGraphics QuartzCore
 ImlacPDS1_CODESIGN_FLAGS = -Sentitlements.plist
 ImlacPDS1_INFOPLIST = Resources/Info.plist
