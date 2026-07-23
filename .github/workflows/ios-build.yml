@@ -44,7 +44,8 @@ jobs:
             find /tmp/libtinfo5-extract -name 'libtinfo.so.5*'
             sudo cp -a /tmp/libtinfo5-extract/usr/lib/x86_64-linux-gnu/libtinfo.so.5* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || \
             sudo cp -a /tmp/libtinfo5-extract/lib/x86_64-linux-gnu/libtinfo.so.5* /usr/lib/x86_64-linux-gnu/
-            rm -rf /tmp/libtinfo5.deb /tmp/libtinfo5-extract
+            rm -f /tmp/libtinfo5.deb
+            sudo rm -rf /tmp/libtinfo5-extract
           }
           sudo ldconfig
           ldconfig -p | grep libtinfo
