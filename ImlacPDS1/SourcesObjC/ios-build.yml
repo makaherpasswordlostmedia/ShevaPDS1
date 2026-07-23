@@ -1,0 +1,73 @@
+name: Build 32-bit iOS App
+
+on:
+  push:
+    branches: [ "main", "32ios" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang lld llvm make zip perl git libpango1.0-dev libglib2.0-dev curl
+
+      - name: Install Theos
+        run: |
+          git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+
+      - name: Setup iOS SDK
+        run: |
+          git clone --depth=1 https://github.com/theos/sdks.git /tmp/sdks
+          cp -r /tmp/sdks/* $HOME/theos/sdks/
+          rm -rf /tmp/sdks
+
+      - name: Setup Theos Linux Toolchain
+        run: |
+          export THEOS=$HOME/theos
+          sudo apt-get install -y xz-utils
+
+          # Официальный (без Swift, компактный) Linux-toolchain от sbingner,
+          # рекомендованный в theos/theos wiki для сборки под iphone:clang.
+          curl -LO https://github.com/sbingner/llvm-project/releases/latest/download/linux-ios-arm64e-clang-toolchain.tar.lzma
+          TMP=$(mktemp -d)
+          tar --lzma -xvf linux-ios-arm64e-clang-toolchain.tar.lzma -C "$TMP"
+          mkdir -p "$THEOS/toolchain/linux/iphone"
+          mv "$TMP"/ios-arm64e-clang-toolchain/* "$THEOS/toolchain/linux/iphone/"
+          rm -rf linux-ios-arm64e-clang-toolchain.tar.lzma "$TMP"
+
+          # Подпись бинарников
+          sudo curl -Lo /usr/local/bin/ldid https://github.com/saurik/ldid/releases/download/v2.1.5/ldid-x86_64
+          sudo chmod +x /usr/local/bin/ldid
+
+          # Проверяем, что нужный бинарник действительно на месте
+          ls -la "$THEOS/toolchain/linux/iphone/bin/" | grep -i clang
+          test -x "$THEOS/toolchain/linux/iphone/bin/clang"
+
+      - name: Run Build
+        run: |
+          export THEOS=$HOME/theos
+          make clean
+          make FINALPACKAGE=1 ARCHS="armv7" TARGET="iphone:clang:9.3:9.0"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShevaPDS1-iOS9.3-Build
+          path: |
+            packages/
+            .theos/obj/
+            *.deb
+            *.ipa
+          retention-days: 7
