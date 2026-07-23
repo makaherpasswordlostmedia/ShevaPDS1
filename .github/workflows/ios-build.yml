@@ -2,7 +2,7 @@ name: Build 32-bit iOS App
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "32ios" ]
   pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
