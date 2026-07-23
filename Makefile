@@ -6,6 +6,9 @@ include $(THEOS)/makefiles/common.mk
 
 APPLICATION_NAME = ImlacPDS1
 
+ADDITIONAL_CFLAGS += -Wno-error=deprecated-module-dot-map -Wno-deprecated-module-dot-map
+ADDITIONAL_OBJCCFLAGS += -Wno-error=deprecated-module-dot-map -Wno-deprecated-module-dot-map
+
 ImlacPDS1_FILES = \
 	ImlacPDS1/SourcesObjC/AppDelegate.m \
 	ImlacPDS1/SourcesObjC/Machine.m \
