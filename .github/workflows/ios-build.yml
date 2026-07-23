@@ -22,6 +22,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential clang lld llvm make zip perl git libpango1.0-dev libglib2.0-dev curl
 
+          # Старый Theos-toolchain (2021) собран против libtinfo.so.5,
+          # которой нет в современных Ubuntu (только libtinfo6+).
+          # Пытаемся поставить пакет напрямую, а если его больше нет в репах
+          # (обычная ситуация на ubuntu-latest), делаем симлинк на libtinfo6.
+          sudo apt-get install -y libtinfo5 || {
+            echo "::warning::libtinfo5 package unavailable, creating compat symlink to libtinfo6"
+            TINFO6=$(find /usr/lib /lib -name 'libtinfo.so.6*' 2>/dev/null | head -1)
+            if [ -n "$TINFO6" ]; then
+              sudo ln -sf "$TINFO6" /usr/lib/x86_64-linux-gnu/libtinfo.so.5
+            else
+              echo "::error::Could not locate libtinfo.so.6 to symlink"
+            fi
+          }
+          sudo ldconfig
+
       - name: Install Theos
         run: |
           git clone --recursive https://github.com/theos/theos.git $HOME/theos
@@ -86,6 +101,9 @@ jobs:
             ln -sf "$(command -v clang)" "$THEOS/toolchain/linux/iphone/bin/clang"
             ln -sf "$(command -v clang++)" "$THEOS/toolchain/linux/iphone/bin/clang++"
           fi
+
+          echo "== Sanity check: can the toolchain clang actually run? =="
+          "$THEOS/toolchain/linux/iphone/bin/clang" --version
 
           make clean
           make FINALPACKAGE=1 ARCHS="armv7" TARGET="iphone:clang:9.3:9.0"
