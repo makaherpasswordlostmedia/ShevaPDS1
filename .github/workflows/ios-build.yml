@@ -1,108 +1,48 @@
-name: iOS Build
+name: Build 32-bit iOS App
 
 on:
   push:
-    branches: [ios]
+    branches: [ "main", "32ios" ]
   pull_request:
-    branches: [ios-WIP]
+    branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build iOS App
-    runs-on: macos-14
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Select Xcode
+      - name: Install build dependencies
         run: |
-          set -e
-          for v in 15.4 15.3 15.2; do
-            if [ -d "/Applications/Xcode_${v}.app" ]; then
-              sudo xcode-select -s "/Applications/Xcode_${v}.app/Contents/Developer"
-              echo "Selected Xcode ${v}"
-              break
-            fi
-          done
-          xcodebuild -version
-          echo "Active developer dir: $(xcode-select -p)"
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang lld llvm make zip
 
-      - name: Create build dir
-        run: mkdir -p build
-
-      - name: Show available simulators
-        run: xcrun simctl list devices available | grep -E "iPhone" | head -10
-
-      - name: Find simulator
-        id: sim
+      - name: Run Makefile
         run: |
-          # Prefer a runtime that matches the active Xcode's iOS SDK, not just any listed device.
-          NAME=$(xcrun simctl list devices available | grep -E "iPhone [0-9]" | grep -v "unavailable" | head -1 | sed -E 's/^ *([^(]+) \(.*/\1/' | xargs)
-          if [ -z "$NAME" ]; then
-            echo "No simulator found, listing all:"
-            xcrun simctl list devices
-            exit 1
+          # Запуск компиляции через Makefile в корню репозитория
+          make
+
+      - name: Package IPA / App
+        run: |
+          # Создаем структуру Payload для создания .ipa пакета
+          mkdir -p Payload
+          if [ -d "*.app" ]; then
+            cp -r *.app Payload/
+          else
+            mkdir -p Payload/ShevaPDS1.app
+            cp -r * Payload/ShevaPDS1.app/ 2>/dev/null || true
           fi
-          echo "name=$NAME" >> $GITHUB_OUTPUT
-          echo "Found simulator: $NAME"
+          zip -r ShevaPDS1-iOS93.ipa Payload
 
-      - name: Build for simulator (Debug)
-        run: |
-          xcodebuild \
-            -project ImlacPDS1.xcodeproj \
-            -scheme ImlacPDS1 \
-            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
-            -configuration Debug \
-            -derivedDataPath build/DerivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
-            clean build \
-          2>&1 | tee build/sim.log
-          grep -q "BUILD SUCCEEDED" build/sim.log && echo "✅ Build OK" || { echo "❌ Build FAILED"; grep "error:" build/sim.log | head -30; exit 1; }
-
-      - name: Build for device (Release, unsigned)
-        run: |
-          xcodebuild \
-            -project ImlacPDS1.xcodeproj \
-            -scheme ImlacPDS1 \
-            -destination "generic/platform=iOS" \
-            -configuration Release \
-            -derivedDataPath build/DerivedDataDevice \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
-            clean build \
-          2>&1 | tee build/device.log
-          grep -q "BUILD SUCCEEDED" build/device.log && echo "✅ Device build OK" || { echo "❌ Device build FAILED"; grep "error:" build/device.log | head -30; exit 1; }
-
-      - name: Package unsigned .ipa
-        run: |
-          set -e
-          APP_PATH=$(find build/DerivedDataDevice/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
-          if [ -z "$APP_PATH" ]; then
-            echo "No .app found in device build products"
-            find build/DerivedDataDevice/Build/Products -maxdepth 3
-            exit 1
-          fi
-          echo "Found app: $APP_PATH"
-          mkdir -p build/ipa/Payload
-          cp -R "$APP_PATH" build/ipa/Payload/
-          cd build/ipa
-          zip -r -q ../ImlacPDS1-unsigned.ipa Payload
-          cd ../..
-          echo "✅ Packaged $(ls -la build/ImlacPDS1-unsigned.ipa)"
-
-      - name: Upload artifacts
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: ImlacPDS1-iOS
+          name: ShevaPDS1-iOS9.3-Build
           path: |
-            build/sim.log
-            build/device.log
-            build/ImlacPDS1-unsigned.ipa
-            build/DerivedData/Build/Products/
-          retention-days: 14
+            *.ipa
+            *.deb
+            Payload/
+          retention-days: 7
