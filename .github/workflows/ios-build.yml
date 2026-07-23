@@ -2,7 +2,7 @@ name: Build 32-bit iOS App
 
 on:
   push:
-    branches: [ "main", "32ios" ]
+    branches: [ "main", "master" ]
   pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential clang lld llvm make zip perl git libpango1.0-dev libglib2.0-dev
+          sudo apt-get install -y build-essential clang lld llvm make zip perl git libpango1.0-dev libglib2.0-dev curl
 
       - name: Install Theos
         run: |
@@ -29,17 +29,27 @@ jobs:
 
       - name: Setup iOS SDK
         run: |
-          # Скачиваем SDK во временную директорию и копируем в theos/sdks
           git clone --depth=1 https://github.com/theos/sdks.git /tmp/sdks
           cp -r /tmp/sdks/* $HOME/theos/sdks/
           rm -rf /tmp/sdks
 
+      - name: Setup Theos Linux Toolchain
+        run: |
+          # Скачиваем официальный Linux-тулчейн для Theos
+          mkdir -p $HOME/theos/toolchain/linux/iphone
+          curl -LO https://github.com/theos/toolchain/releases/download/v1.0.0/linux-arm64-toolchain.tar.gz || \
+          curl -LO https://github.com/saurik/ldid/releases/download/v2.1.5/ldid-x86_64
+          
+          # Устанавливаем ldid для подписи бинарников
+          sudo curl -Lo /usr/local/bin/ldid https://github.com/saurik/ldid/releases/download/v2.1.5/ldid-x86_64
+          sudo chmod +x /usr/local/bin/ldid
+
       - name: Run Build
         run: |
           export THEOS=$HOME/theos
-          # Указываем целевую архитектуру armv7 для iOS 9.3
+          # Указываем Theos использовать системный Clang, если нет отдельного тулчейна
           make clean
-          make FINALPACKAGE=1 ARCHS="armv7" TARGET="iphone:clang:9.3:9.0"
+          make FINALPACKAGE=1 ARCHS="armv7" TARGET="iphone:clang:9.3:9.0" TARGET_CC="clang" TARGET_CXX="clang++"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
