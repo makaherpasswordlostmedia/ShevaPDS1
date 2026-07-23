@@ -15,7 +15,7 @@ static UIFont *MonoFont(CGFloat size) {
     UIFont *f = [UIFont fontWithName:@"Menlo-Regular" size:size];
     return f ?: [UIFont systemFontOfSize:size];
 }
-static UIFont *MonoFontBold(CGFloat size) {
+__unused static UIFont *MonoFontBold(CGFloat size) {
     UIFont *f = [UIFont fontWithName:@"Menlo-Bold" size:size];
     return f ?: [UIFont boldSystemFontOfSize:size];
 }
