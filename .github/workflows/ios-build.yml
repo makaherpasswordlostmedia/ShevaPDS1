@@ -14,35 +14,38 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential clang lld llvm make zip
+          sudo apt-get install -y build-essential clang lld llvm make zip perl git libpango1.0-dev libglib2.0-dev
 
-      - name: Run Makefile
+      - name: Install Theos
         run: |
-          # Запуск компиляции через Makefile в корню репозитория
-          make
+          git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
 
-      - name: Package IPA / App
+      - name: Setup iOS SDK
         run: |
-          # Создаем структуру Payload для создания .ipa пакета
-          mkdir -p Payload
-          if [ -d "*.app" ]; then
-            cp -r *.app Payload/
-          else
-            mkdir -p Payload/ShevaPDS1.app
-            cp -r * Payload/ShevaPDS1.app/ 2>/dev/null || true
-          fi
-          zip -r ShevaPDS1-iOS93.ipa Payload
+          # Скачиваем патченный SDK для кросс-компиляции на Linux
+          git clone https://github.com/theos/sdks.git $HOME/theos/sdks
 
-      - name: Upload Artifact
+      - name: Run Build
+        run: |
+          export THEOS=$HOME/theos
+          # Указываем целевую архитектуру armv7 для iOS 9.3
+          make clean
+          make FINALPACKAGE=1 ARCHS="armv7" TARGET="iphone:clang:9.3:9.0"
+
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ShevaPDS1-iOS9.3-Build
           path: |
-            *.ipa
+            packages/
+            .theos/obj/
             *.deb
-            Payload/
+            *.ipa
           retention-days: 7
