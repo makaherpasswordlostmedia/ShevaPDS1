@@ -188,7 +188,11 @@ jobs:
           "$THEOS/toolchain/linux/iphone/bin/clang" --version
 
           make clean
-          make FINALPACKAGE=1 ARCHS="armv7" TARGET="iphone:clang:9.3:9.0"
+          make package FINALPACKAGE=1 ARCHS="armv7" TARGET="iphone:clang:9.3:9.0"
+
+          echo "== Looking for produced packages =="
+          find . -iname "*.deb" -o -iname "*.ipa" 2>/dev/null | grep -v "\.theos/" || echo "::warning::No .deb/.ipa found after package step"
+          ls -la packages/ 2>/dev/null || echo "::warning::No packages/ directory produced"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
