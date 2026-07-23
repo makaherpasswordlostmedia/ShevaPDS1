@@ -1,0 +1,8 @@
+Package: com.imlac.pds1
+Name: ImlacPDS1
+Version: 1.0
+Architecture: iphoneos-arm
+Description: Imlac PDS-1 Emulator
+Maintainer: ShevaPDS1
+Author: ShevaPDS1
+Section: Applications
