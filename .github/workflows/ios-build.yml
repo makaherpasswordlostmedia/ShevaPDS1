@@ -61,9 +61,17 @@ jobs:
           echo "== Installed toolchain bin/ =="
           ls -la "$THEOS/toolchain/linux/iphone/bin/"
 
-          echo "== ldid =="
-          sudo curl -fL -o /usr/local/bin/ldid https://github.com/saurik/ldid/releases/download/v2.1.5/ldid-x86_64
-          sudo chmod +x /usr/local/bin/ldid
+          echo "== ldid (bundled with toolchain) =="
+          if [ -x "$THEOS/toolchain/linux/iphone/bin/ldid" ]; then
+            sudo ln -sf "$THEOS/toolchain/linux/iphone/bin/ldid" /usr/local/bin/ldid
+            echo "Using bundled ldid: $(ldid -h 2>&1 | head -1 || true)"
+          else
+            echo "::warning::ldid not found in toolchain, trying fallback download"
+            sudo curl -fL -o /usr/local/bin/ldid \
+              https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64 \
+              || echo "::warning::ldid fallback download also failed, continuing without it"
+            sudo chmod +x /usr/local/bin/ldid || true
+          fi
 
           echo "== Final check =="
           test -x "$THEOS/toolchain/linux/iphone/bin/clang" && echo "clang OK: $($THEOS/toolchain/linux/iphone/bin/clang --version)"
