@@ -188,7 +188,7 @@ jobs:
           "$THEOS/toolchain/linux/iphone/bin/clang" --version
 
           make clean
-          make package FINALPACKAGE=1 ARCHS="armv7" TARGET="iphone:clang:9.3:9.0"
+          make package FINALPACKAGE=1 ARCHS="armv7" TARGET="iphone:clang:9.3:9.0" PACKAGE_FORMAT=ipa
 
           echo "== Looking for produced packages =="
           find . -iname "*.deb" -o -iname "*.ipa" 2>/dev/null | grep -v "\.theos/" || echo "::warning::No .deb/.ipa found after package step"
