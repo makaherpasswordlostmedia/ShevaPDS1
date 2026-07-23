@@ -57,9 +57,43 @@ jobs:
 
       - name: Setup iOS SDK
         run: |
-          git clone --depth=1 https://github.com/theos/sdks.git /tmp/sdks
-          cp -r /tmp/sdks/* $HOME/theos/sdks/
-          rm -rf /tmp/sdks
+          set -euo pipefail
+
+          # Чистим на случай, если раньше уже был установлен другой/неполный SDK
+          rm -rf "$HOME/theos/sdks/iPhoneOS9.3.sdk"
+          mkdir -p "$HOME/theos/sdks"
+
+          # theos/sdks (master) генерируется из современных 64-бит-only
+          # прошивок и НЕ содержит armv7-срез системных .dylib (liblaunch и т.д.),
+          # поэтому линковка под armv7 падает с "file not found ... for architecture armv7".
+          # Sn0wCooder/theos-sdks хранит "классический" iPhoneOS9.3 SDK,
+          # снятый ещё когда armv7 был активной архитектурой, и линкуется нормально.
+          curl -fL -o /tmp/iPhoneOS9.3.sdk.tbz2 \
+            "https://raw.githubusercontent.com/Sn0wCooder/theos-sdks/master/iPhoneOS9.3.sdk.tbz2"
+
+          echo "== Downloaded file info =="
+          ls -la /tmp/iPhoneOS9.3.sdk.tbz2
+          file /tmp/iPhoneOS9.3.sdk.tbz2
+
+          tar -xjf /tmp/iPhoneOS9.3.sdk.tbz2 -C "$HOME/theos/sdks/"
+          rm -f /tmp/iPhoneOS9.3.sdk.tbz2
+
+          echo "== Installed SDK =="
+          ls -la "$HOME/theos/sdks/"
+
+          # Проверяем, что нужный armv7-срез действительно присутствует.
+          # Если этого файла нет — падаем сразу здесь, а не при линковке позже.
+          echo "== Checking liblaunch for armv7 =="
+          LIBLAUNCH=$(find "$HOME/theos/sdks/iPhoneOS9.3.sdk" -iname 'liblaunch*' | head -1)
+          if [ -z "$LIBLAUNCH" ]; then
+            echo "::error::liblaunch not found anywhere in the installed SDK!"
+            exit 1
+          fi
+          echo "Found: $LIBLAUNCH"
+          file "$LIBLAUNCH" || true
+          if command -v otool >/dev/null 2>&1; then
+            otool -hv "$LIBLAUNCH" 2>&1 | grep -i arm || echo "::warning::otool couldn't confirm armv7 slice"
+          fi
 
       - name: Setup Theos Linux Toolchain
         run: |
