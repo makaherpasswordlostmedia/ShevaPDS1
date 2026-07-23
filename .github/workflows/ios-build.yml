@@ -82,14 +82,49 @@ jobs:
           ls -la "$HOME/theos/sdks/"
 
           # Проверяем, что нужный armv7-срез действительно присутствует.
-          # Если этого файла нет — падаем сразу здесь, а не при линковке позже.
+          # Публичные SDK-дампы (theos/sdks, Sn0wCooder и т.д.) чаще всего сняты
+          # с уже 64-битных устройств, поэтому системные .dylib вроде liblaunch
+          # в них лишились armv7-среза. Если liblaunch отсутствует или не содержит
+          # armv7, тянем его из iOS 8.1 SDK (последний чисто 32-битный дамп),
+          # где либа гарантированно есть под armv7, и подкладываем в 9.3 SDK.
           echo "== Checking liblaunch for armv7 =="
           LIBLAUNCH=$(find "$HOME/theos/sdks/iPhoneOS9.3.sdk" -iname 'liblaunch*' | head -1)
+
+          NEED_FALLBACK=0
           if [ -z "$LIBLAUNCH" ]; then
-            echo "::error::liblaunch not found anywhere in the installed SDK!"
-            exit 1
+            echo "::warning::liblaunch not found in 9.3 SDK at all"
+            NEED_FALLBACK=1
+          else
+            echo "Found: $LIBLAUNCH"
+            file "$LIBLAUNCH" || true
           fi
-          echo "Found: $LIBLAUNCH"
+
+          if [ "$NEED_FALLBACK" = "1" ]; then
+            echo "== Fetching iOS 8.1 SDK to source a real armv7 liblaunch =="
+            curl -fL -o /tmp/iPhoneOS8.1.sdk.tbz2 \
+              "https://raw.githubusercontent.com/Sn0wCooder/theos-sdks/master/iPhoneOS8.1.sdk.tbz2"
+            mkdir -p /tmp/ios81
+            tar -xjf /tmp/iPhoneOS8.1.sdk.tbz2 -C /tmp/ios81
+            rm -f /tmp/iPhoneOS8.1.sdk.tbz2
+
+            SRC_LIBLAUNCH=$(find /tmp/ios81 -iname 'liblaunch*' | head -1)
+            if [ -z "$SRC_LIBLAUNCH" ]; then
+              echo "::error::liblaunch not found in iOS 8.1 SDK either — cannot fix armv7 linking"
+              exit 1
+            fi
+            echo "Sourcing from: $SRC_LIBLAUNCH"
+
+            # Кладём в тот же относительный путь, что ожидает линкер: usr/lib/system/
+            DEST_DIR="$HOME/theos/sdks/iPhoneOS9.3.sdk/usr/lib/system"
+            mkdir -p "$DEST_DIR"
+            cp -a "$SRC_LIBLAUNCH" "$DEST_DIR/"
+            rm -rf /tmp/ios81
+
+            LIBLAUNCH=$(find "$HOME/theos/sdks/iPhoneOS9.3.sdk" -iname 'liblaunch*' | head -1)
+            echo "== After fallback: =="
+            find "$HOME/theos/sdks/iPhoneOS9.3.sdk" -iname 'liblaunch*'
+          fi
+
           file "$LIBLAUNCH" || true
           if command -v otool >/dev/null 2>&1; then
             otool -hv "$LIBLAUNCH" 2>&1 | grep -i arm || echo "::warning::otool couldn't confirm armv7 slice"
