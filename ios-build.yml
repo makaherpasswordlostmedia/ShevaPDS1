@@ -1,0 +1,153 @@
+name: Build 32-bit iOS App
+
+on:
+  push:
+    branches: [ "main", "32ios" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang lld llvm make zip perl git libpango1.0-dev libglib2.0-dev curl
+
+          # Старый Theos-toolchain (2021, LLVM-10) слинкован против настоящей
+          # libtinfo.so.5 (ABI5, ncurses <6.3) — симлинк на libtinfo6 НЕ подходит
+          # (нет нужных versioned symbols). Ставим пакет напрямую или,
+          # если он всё ещё есть в репах, через apt.
+          sudo apt-get install -y libtinfo5 || {
+            echo "::warning::libtinfo5 not in apt repos, fetching .deb directly"
+            set +e
+            # Основной источник: Debian bookworm (текущий stable) всё ещё
+            # содержит libtinfo5 в основных, не архивных репозиториях.
+            curl -fL -o /tmp/libtinfo5.deb \
+              http://deb.debian.org/debian/pool/main/n/ncurses/libtinfo5_6.4-4_amd64.deb
+            if [ $? -ne 0 ] || [ ! -s /tmp/libtinfo5.deb ]; then
+              echo "::warning::Debian source failed, trying Ubuntu security archive"
+              curl -fL -o /tmp/libtinfo5.deb \
+                http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.1_amd64.deb
+            fi
+            set -e
+            file /tmp/libtinfo5.deb
+            sudo dpkg -x /tmp/libtinfo5.deb /tmp/libtinfo5-extract
+            find /tmp/libtinfo5-extract -name 'libtinfo.so.5*'
+            sudo cp -a /tmp/libtinfo5-extract/usr/lib/x86_64-linux-gnu/libtinfo.so.5* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || \
+            sudo cp -a /tmp/libtinfo5-extract/lib/x86_64-linux-gnu/libtinfo.so.5* /usr/lib/x86_64-linux-gnu/
+            rm -f /tmp/libtinfo5.deb
+            sudo rm -rf /tmp/libtinfo5-extract
+          }
+          sudo ldconfig
+          ldconfig -p | grep libtinfo
+
+      - name: Install Theos
+        run: |
+          git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+
+      - name: Setup iOS SDK
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/theos/sdks"
+
+          # theos/sdks (master) генерируется из современных 64-бит-only
+          # прошивок и НЕ содержит armv7-срез системных .dylib (liblaunch и т.д.),
+          # поэтому линковка под armv7 падает с "file not found ... for architecture armv7".
+          # Sn0wCooder/theos-sdks хранит "классический" iPhoneOS9.3 SDK,
+          # снятый ещё когда armv7 был активной архитектурой, и линкуется нормально.
+          curl -fL -o /tmp/iPhoneOS9.3.sdk.tbz2 \
+            "https://raw.githubusercontent.com/Sn0wCooder/theos-sdks/master/iPhoneOS9.3.sdk.tbz2"
+
+          ls -la /tmp/iPhoneOS9.3.sdk.tbz2
+          file /tmp/iPhoneOS9.3.sdk.tbz2
+
+          tar -xjf /tmp/iPhoneOS9.3.sdk.tbz2 -C "$HOME/theos/sdks/"
+          rm -f /tmp/iPhoneOS9.3.sdk.tbz2
+
+          echo "== Installed SDK =="
+          ls -la "$HOME/theos/sdks/"
+
+          # Проверяем, что нужный armv7-срез действительно присутствует
+          echo "== Checking liblaunch.tbd / liblaunch.dylib for armv7 =="
+          find "$HOME/theos/sdks/iPhoneOS9.3.sdk" -iname 'liblaunch*'
+
+      - name: Setup Theos Linux Toolchain
+        run: |
+          set -euo pipefail
+          export THEOS=$HOME/theos
+          sudo apt-get install -y xz-utils
+
+          echo "== Downloading toolchain =="
+          curl -fL -o /tmp/toolchain.tar.lzma \
+            https://github.com/sbingner/llvm-project/releases/latest/download/linux-ios-arm64e-clang-toolchain.tar.lzma
+
+          echo "== Downloaded file info =="
+          ls -la /tmp/toolchain.tar.lzma
+          file /tmp/toolchain.tar.lzma
+
+          echo "== Extracting =="
+          TMP=$(mktemp -d)
+          tar --lzma -xvf /tmp/toolchain.tar.lzma -C "$TMP"
+
+          echo "== Extracted contents =="
+          find "$TMP" -maxdepth 2
+
+          mkdir -p "$THEOS/toolchain/linux/iphone"
+          mv "$TMP"/ios-arm64e-clang-toolchain/* "$THEOS/toolchain/linux/iphone/"
+          rm -rf /tmp/toolchain.tar.lzma "$TMP"
+
+          echo "== Installed toolchain bin/ =="
+          ls -la "$THEOS/toolchain/linux/iphone/bin/"
+
+          echo "== ldid (bundled with toolchain) =="
+          if [ -x "$THEOS/toolchain/linux/iphone/bin/ldid" ]; then
+            sudo ln -sf "$THEOS/toolchain/linux/iphone/bin/ldid" /usr/local/bin/ldid
+            echo "Using bundled ldid: $(ldid -h 2>&1 | head -1 || true)"
+          else
+            echo "::warning::ldid not found in toolchain, trying fallback download"
+            sudo curl -fL -o /usr/local/bin/ldid \
+              https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64 \
+              || echo "::warning::ldid fallback download also failed, continuing without it"
+            sudo chmod +x /usr/local/bin/ldid || true
+          fi
+
+          echo "== Final check =="
+          test -x "$THEOS/toolchain/linux/iphone/bin/clang" && echo "clang OK: $($THEOS/toolchain/linux/iphone/bin/clang --version)"
+
+      - name: Run Build
+        run: |
+          export THEOS=$HOME/theos
+
+          if [ ! -x "$THEOS/toolchain/linux/iphone/bin/clang" ]; then
+            echo "::warning::Theos toolchain clang missing, falling back to system clang symlink"
+            mkdir -p "$THEOS/toolchain/linux/iphone/bin"
+            ln -sf "$(command -v clang)" "$THEOS/toolchain/linux/iphone/bin/clang"
+            ln -sf "$(command -v clang++)" "$THEOS/toolchain/linux/iphone/bin/clang++"
+          fi
+
+          echo "== Sanity check: can the toolchain clang actually run? =="
+          "$THEOS/toolchain/linux/iphone/bin/clang" --version
+
+          make clean
+          make FINALPACKAGE=1 ARCHS="armv7" TARGET="iphone:clang:9.3:9.0"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShevaPDS1-iOS9.3-Build
+          path: |
+            packages/
+            .theos/obj/
+            *.deb
+            *.ipa
+          retention-days: 7
