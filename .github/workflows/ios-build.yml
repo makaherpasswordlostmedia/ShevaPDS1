@@ -28,9 +28,21 @@ jobs:
           # если он всё ещё есть в репах, через apt.
           sudo apt-get install -y libtinfo5 || {
             echo "::warning::libtinfo5 not in apt repos, fetching .deb directly"
+            set +e
+            # Основной источник: Debian bookworm (текущий stable) всё ещё
+            # содержит libtinfo5 в основных, не архивных репозиториях.
             curl -fL -o /tmp/libtinfo5.deb \
-              http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.1_amd64.deb
+              http://deb.debian.org/debian/pool/main/n/ncurses/libtinfo5_6.4-4_amd64.deb
+            if [ $? -ne 0 ] || [ ! -s /tmp/libtinfo5.deb ]; then
+              echo "::warning::Debian source failed, trying Ubuntu security archive"
+              curl -fL -o /tmp/libtinfo5.deb \
+                http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.1_amd64.deb
+            fi
+            set -e
+            file /tmp/libtinfo5.deb
             sudo dpkg -x /tmp/libtinfo5.deb /tmp/libtinfo5-extract
+            find /tmp/libtinfo5-extract -name 'libtinfo.so.5*'
+            sudo cp -a /tmp/libtinfo5-extract/usr/lib/x86_64-linux-gnu/libtinfo.so.5* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || \
             sudo cp -a /tmp/libtinfo5-extract/lib/x86_64-linux-gnu/libtinfo.so.5* /usr/lib/x86_64-linux-gnu/
             rm -rf /tmp/libtinfo5.deb /tmp/libtinfo5-extract
           }
