@@ -35,21 +35,52 @@ jobs:
 
       - name: Setup Theos Linux Toolchain
         run: |
-          # Скачиваем официальный Linux-тулчейн для Theos
-          mkdir -p $HOME/theos/toolchain/linux/iphone
-          curl -LO https://github.com/theos/toolchain/releases/download/v1.0.0/linux-arm64-toolchain.tar.gz || \
-          curl -LO https://github.com/saurik/ldid/releases/download/v2.1.5/ldid-x86_64
-          
-          # Устанавливаем ldid для подписи бинарников
-          sudo curl -Lo /usr/local/bin/ldid https://github.com/saurik/ldid/releases/download/v2.1.5/ldid-x86_64
+          set -euo pipefail
+          export THEOS=$HOME/theos
+          sudo apt-get install -y xz-utils
+
+          echo "== Downloading toolchain =="
+          curl -fL -o /tmp/toolchain.tar.lzma \
+            https://github.com/sbingner/llvm-project/releases/latest/download/linux-ios-arm64e-clang-toolchain.tar.lzma
+
+          echo "== Downloaded file info =="
+          ls -la /tmp/toolchain.tar.lzma
+          file /tmp/toolchain.tar.lzma
+
+          echo "== Extracting =="
+          TMP=$(mktemp -d)
+          tar --lzma -xvf /tmp/toolchain.tar.lzma -C "$TMP"
+
+          echo "== Extracted contents =="
+          find "$TMP" -maxdepth 2
+
+          mkdir -p "$THEOS/toolchain/linux/iphone"
+          mv "$TMP"/ios-arm64e-clang-toolchain/* "$THEOS/toolchain/linux/iphone/"
+          rm -rf /tmp/toolchain.tar.lzma "$TMP"
+
+          echo "== Installed toolchain bin/ =="
+          ls -la "$THEOS/toolchain/linux/iphone/bin/"
+
+          echo "== ldid =="
+          sudo curl -fL -o /usr/local/bin/ldid https://github.com/saurik/ldid/releases/download/v2.1.5/ldid-x86_64
           sudo chmod +x /usr/local/bin/ldid
+
+          echo "== Final check =="
+          test -x "$THEOS/toolchain/linux/iphone/bin/clang" && echo "clang OK: $($THEOS/toolchain/linux/iphone/bin/clang --version)"
 
       - name: Run Build
         run: |
           export THEOS=$HOME/theos
-          # Указываем Theos использовать системный Clang, если нет отдельного тулчейна
+
+          if [ ! -x "$THEOS/toolchain/linux/iphone/bin/clang" ]; then
+            echo "::warning::Theos toolchain clang missing, falling back to system clang symlink"
+            mkdir -p "$THEOS/toolchain/linux/iphone/bin"
+            ln -sf "$(command -v clang)" "$THEOS/toolchain/linux/iphone/bin/clang"
+            ln -sf "$(command -v clang++)" "$THEOS/toolchain/linux/iphone/bin/clang++"
+          fi
+
           make clean
-          make FINALPACKAGE=1 ARCHS="armv7" TARGET="iphone:clang:9.3:9.0" TARGET_CC="clang" TARGET_CXX="clang++"
+          make FINALPACKAGE=1 ARCHS="armv7" TARGET="iphone:clang:9.3:9.0"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
