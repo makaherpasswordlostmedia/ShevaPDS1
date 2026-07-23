@@ -389,37 +389,43 @@ static UIFont *MonoFontBold(CGFloat size) {
 
 #pragma mark - MP thread
 
+- (void)mpThreadMain {
+    __weak EmulatorViewController *weakSelf = self;
+    while (YES) {
+        __strong EmulatorViewController *strongSelf = weakSelf;
+        if (!strongSelf || !strongSelf->_mpRunning) break;
+        if (strongSelf.machine.mp_run) {
+            for (int i = 0; i < 200; i++) { [strongSelf.machine mpStep]; }
+            for (int i = 0; i < 50; i++) { [strongSelf.machine dpStep]; }
+        }
+        strongSelf = nil;
+        [NSThread sleepForTimeInterval:0.001];
+    }
+}
+
 - (void)startMP {
     _mpRunning = YES;
-    __weak EmulatorViewController *weakSelf = self;
-    NSThread *t = [[NSThread alloc] initWithBlock:^{
-        while (weakSelf && weakSelf->_mpRunning) {
-            EmulatorViewController *strongSelf = weakSelf;
-            if (!strongSelf) break;
-            if (strongSelf.machine.mp_run) {
-                for (int i = 0; i < 200; i++) { [strongSelf.machine mpStep]; }
-                for (int i = 0; i < 50; i++) { [strongSelf.machine dpStep]; }
-            }
-            [NSThread sleepForTimeInterval:0.001];
-        }
-    }];
+    NSThread *t = [[NSThread alloc] initWithTarget:self selector:@selector(mpThreadMain) object:nil];
     t.name = @"mp-thread";
     [t start];
 }
 
 #pragma mark - FPS ticker
 
+- (void)fpsTick:(NSTimer *)timer {
+    float fps = self.crtView.actualFps;
+    NSInteger target = self.crtView.maxFps;
+    self.tvFps.text = [NSString stringWithFormat:@"%d/%ldfps", (int)fps, (long)target];
+    self.tvPc.text = [NSString stringWithFormat:@"PC:%04lX  AC:%04lX", (long)self.machine.mp_pc, (long)self.machine.mp_ac];
+    self.tvAc.text = [NSString stringWithFormat:@"IR:%04lX  L:%ld", (long)self.machine.mp_ir, (long)self.machine.mp_link];
+}
+
 - (void)startFpsTicker {
-    __weak EmulatorViewController *weakSelf = self;
-    self.fpsTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer * _Nonnull timer) {
-        EmulatorViewController *strongSelf = weakSelf;
-        if (!strongSelf) return;
-        float fps = strongSelf.crtView.actualFps;
-        NSInteger target = strongSelf.crtView.maxFps;
-        strongSelf.tvFps.text = [NSString stringWithFormat:@"%d/%ldfps", (int)fps, (long)target];
-        strongSelf.tvPc.text = [NSString stringWithFormat:@"PC:%04lX  AC:%04lX", (long)strongSelf.machine.mp_pc, (long)strongSelf.machine.mp_ac];
-        strongSelf.tvAc.text = [NSString stringWithFormat:@"IR:%04lX  L:%ld", (long)strongSelf.machine.mp_ir, (long)strongSelf.machine.mp_link];
-    }];
+    self.fpsTimer = [NSTimer scheduledTimerWithTimeInterval:0.5
+                                                       target:self
+                                                     selector:@selector(fpsTick:)
+                                                     userInfo:nil
+                                                      repeats:YES];
 }
 
 #pragma mark - Demo buttons
