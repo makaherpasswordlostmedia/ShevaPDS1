@@ -29,8 +29,10 @@ jobs:
 
       - name: Setup iOS SDK
         run: |
-          # Скачиваем патченный SDK для кросс-компиляции на Linux
-          git clone https://github.com/theos/sdks.git $HOME/theos/sdks
+          # Скачиваем SDK во временную директорию и копируем в theos/sdks
+          git clone --depth=1 https://github.com/theos/sdks.git /tmp/sdks
+          cp -r /tmp/sdks/* $HOME/theos/sdks/
+          rm -rf /tmp/sdks
 
       - name: Run Build
         run: |
