@@ -12,12 +12,23 @@
         android:theme="@style/AppTheme"
         android:hardwareAccelerated="true">
 
+        <!--
+          PDS1Activity extends SDL2's SDLActivity (org.libsdl.app.SDLActivity),
+          which owns the native window/surface and calls into SDL_main()
+          in android_main.c on a background thread. This replaces the old
+          EmulatorActivity, whose UI (control panel, dpad, keyboard, chat)
+          is now rendered by ui_widgets.c inside the same SDL2 GL surface
+          instead of as separate Android Views — see PDS1Activity.java.
+        -->
         <activity
-            android:name=".EmulatorActivity"
+            android:name=".PDS1Activity"
             android:exported="true"
             android:screenOrientation="landscape"
-            android:configChanges="orientation|screenSize|keyboardHidden"
-            android:windowSoftInputMode="adjustNothing">
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize|uiMode"
+            android:windowSoftInputMode="adjustNothing"
+            android:launchMode="singleTask"
+            android:resizeableActivity="false"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
