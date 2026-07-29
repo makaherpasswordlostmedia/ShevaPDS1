@@ -2,7 +2,7 @@ name: Build Imlac PDS-1 APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, sdl2 ]
   workflow_dispatch:
 
 jobs:
