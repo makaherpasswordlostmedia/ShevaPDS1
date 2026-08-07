@@ -22,20 +22,33 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential clang lld llvm make zip perl git libpango1.0-dev libglib2.0-dev curl
 
-          # Старый Theos-toolchain (2021) собран против libtinfo.so.5,
-          # которой нет в современных Ubuntu (только libtinfo6+).
-          # Пытаемся поставить пакет напрямую, а если его больше нет в репах
-          # (обычная ситуация на ubuntu-latest), делаем симлинк на libtinfo6.
+          # Старый Theos-toolchain (2021, LLVM-10) слинкован против настоящей
+          # libtinfo.so.5 (ABI5, ncurses <6.3) — симлинк на libtinfo6 НЕ подходит
+          # (нет нужных versioned symbols). Ставим пакет напрямую или,
+          # если он всё ещё есть в репах, через apt.
           sudo apt-get install -y libtinfo5 || {
-            echo "::warning::libtinfo5 package unavailable, creating compat symlink to libtinfo6"
-            TINFO6=$(find /usr/lib /lib -name 'libtinfo.so.6*' 2>/dev/null | head -1)
-            if [ -n "$TINFO6" ]; then
-              sudo ln -sf "$TINFO6" /usr/lib/x86_64-linux-gnu/libtinfo.so.5
-            else
-              echo "::error::Could not locate libtinfo.so.6 to symlink"
+            echo "::warning::libtinfo5 not in apt repos, fetching .deb directly"
+            set +e
+            # Основной источник: Debian bookworm (текущий stable) всё ещё
+            # содержит libtinfo5 в основных, не архивных репозиториях.
+            curl -fL -o /tmp/libtinfo5.deb \
+              http://deb.debian.org/debian/pool/main/n/ncurses/libtinfo5_6.4-4_amd64.deb
+            if [ $? -ne 0 ] || [ ! -s /tmp/libtinfo5.deb ]; then
+              echo "::warning::Debian source failed, trying Ubuntu security archive"
+              curl -fL -o /tmp/libtinfo5.deb \
+                http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.1_amd64.deb
             fi
+            set -e
+            file /tmp/libtinfo5.deb
+            sudo dpkg -x /tmp/libtinfo5.deb /tmp/libtinfo5-extract
+            find /tmp/libtinfo5-extract -name 'libtinfo.so.5*'
+            sudo cp -a /tmp/libtinfo5-extract/usr/lib/x86_64-linux-gnu/libtinfo.so.5* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || \
+            sudo cp -a /tmp/libtinfo5-extract/lib/x86_64-linux-gnu/libtinfo.so.5* /usr/lib/x86_64-linux-gnu/
+            rm -f /tmp/libtinfo5.deb
+            sudo rm -rf /tmp/libtinfo5-extract
           }
           sudo ldconfig
+          ldconfig -p | grep libtinfo
 
       - name: Install Theos
         run: |
@@ -44,9 +57,29 @@ jobs:
 
       - name: Setup iOS SDK
         run: |
-          git clone --depth=1 https://github.com/theos/sdks.git /tmp/sdks
-          cp -r /tmp/sdks/* $HOME/theos/sdks/
-          rm -rf /tmp/sdks
+          set -euo pipefail
+          mkdir -p "$HOME/theos/sdks"
+
+          # theos/sdks (master) генерируется из современных 64-бит-only
+          # прошивок и НЕ содержит armv7-срез системных .dylib (liblaunch и т.д.),
+          # поэтому линковка под armv7 падает с "file not found ... for architecture armv7".
+          # Sn0wCooder/theos-sdks хранит "классический" iPhoneOS9.3 SDK,
+          # снятый ещё когда armv7 был активной архитектурой, и линкуется нормально.
+          curl -fL -o /tmp/iPhoneOS9.3.sdk.tbz2 \
+            "https://raw.githubusercontent.com/Sn0wCooder/theos-sdks/master/iPhoneOS9.3.sdk.tbz2"
+
+          ls -la /tmp/iPhoneOS9.3.sdk.tbz2
+          file /tmp/iPhoneOS9.3.sdk.tbz2
+
+          tar -xjf /tmp/iPhoneOS9.3.sdk.tbz2 -C "$HOME/theos/sdks/"
+          rm -f /tmp/iPhoneOS9.3.sdk.tbz2
+
+          echo "== Installed SDK =="
+          ls -la "$HOME/theos/sdks/"
+
+          # Проверяем, что нужный armv7-срез действительно присутствует
+          echo "== Checking liblaunch.tbd / liblaunch.dylib for armv7 =="
+          find "$HOME/theos/sdks/iPhoneOS9.3.sdk" -iname 'liblaunch*'
 
       - name: Setup Theos Linux Toolchain
         run: |
@@ -106,7 +139,11 @@ jobs:
           "$THEOS/toolchain/linux/iphone/bin/clang" --version
 
           make clean
-          make FINALPACKAGE=1 ARCHS="armv7" TARGET="iphone:clang:9.3:9.0"
+          make package FINALPACKAGE=1 ARCHS="armv7" TARGET="iphone:clang:9.3:9.0"
+
+          echo "== Looking for produced packages =="
+          find . -iname "*.deb" -o -iname "*.ipa" 2>/dev/null | grep -v "\.theos/" || echo "::warning::No .deb/.ipa found after package step"
+          ls -la packages/ 2>/dev/null || echo "::warning::No packages/ directory produced"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
