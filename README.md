@@ -1,39 +1,31 @@
-# Imlac PDS-1 — iOS
+# Imlac PDS-1 — 32-bit iOS 7.1 (armv7)
 
-Полный порт эмулятора Imlac PDS-1 (1974) с Android на iOS, написанный на Swift + UIKit.
-
-iOS 14.7+!(had support 12.5+ but untested)
-
-## Файлы
-
-| Файл | Описание |
-|------|---------|
-| `Machine.swift` | Ядро эмулятора — MP + DP процессоры, 4096 слов RAM |
-| `Demos.swift` | Демо-программы: звёзды, волны, Lissajous, Spacewar и др. |
-| `CrtView.swift` | Рендерер — фосфорный CRT эффект через Core Graphics |
-| `MazeWarGame.swift` | Maze War 1974 — 3D шутер с AI и мультиплеером |
-| `NetSession.swift` | UDP LAN мультиплеер по WiFi (порты 7474/7475) |
-| `EmulatorViewController.swift` | Главный экран — CRT + панель управления |
-| `AppDelegate.swift` | Точка входа приложения |
+Objective-C порт эмулятора Imlac PDS-1 (1974) для 32-битных устройств на iOS 7.x
+(iPhone 4/4s/5/5c, iPad 2/3/4/mini 1 и т.д.). Минимальная версия — iOS 7.0, приложение
+работает и на более новых системах (проверялось по коду до iOS 9.3).
 
 ## Сборка
 
-### Xcode (локально)
-1. Открыть `ImlacPDS1.xcodeproj`
-2. Выбрать симулятор или устройство
-3. Cmd+R
+GitHub Actions (`.github/workflows/ios-build.yml`) собирает `.ipa` и `.deb` через Theos на ubuntu-latest:
+toolchain L1ghtmann + iPhoneOS 9.3 SDK (Sn0wCooder/theos-sdks), `ARCHS = armv7`,
+`TARGET = iphone:clang:9.3:7.0` (SDK 9.3, deployment target 7.0).
 
-### GitHub Actions CI
-~~Push в `main` — автоматически собирает Debug на симуляторе и Release архив.~~
+Локально: `export THEOS=~/theos && make package FINALPACKAGE=1`
 
-## Мультиплеер (Maze War LAN)
+Артефакт: `packages/*.ipa` и `packages/*.deb`.
 
-- Оба устройства в **одной WiFi сети**
-- Нажми **HOST** на первом устройстве
-- Нажми **JOIN** на втором
-- Автоматически находят друг друга через UDP broadcast
-- Порты: 7474 (игра), 7475 (поиск)
-- Чат встроен в боковую панель
+## Особенности iOS 7
+
+- `UIScreen.bounds` до iOS 8 всегда портретный, поэтому раскладка берёт длинную сторону как ширину.
+- Очередь сети использует `DISPATCH_QUEUE_PRIORITY_HIGH` (QoS-классы есть только с iOS 8).
+- В `Resources/` лежат чёрные `Default*.png`, чтобы iPhone 5/5s/5c запускал приложение на весь 4" экран.
+
+## Производительность (iPad 2 и другие A5)
+
+`CrtView` рендерит кадр в непрозрачный BGRA-битмап и отдаёт его в Core Animation как `layer.contents`
+(без `drawRect:`). Сканлайны и виньетка запекаются один раз в отдельный слой. Векторы группируются по яркости
+и рисуются несколькими вызовами `CGContextStrokeLineSegments` вместо 3 обводок на вектор.
+Если кадр не укладывается в бюджет, разрешение рендера автоматически снижается 1.0x → 0.75x → 0.5x.
 
 ## Управление
 
@@ -44,10 +36,7 @@ iOS 14.7+!(had support 12.5+ but untested)
 | ◀ / A | Повернуть влево |
 | ▶ / D | Повернуть вправо |
 | B / A / SPACE | Огонь |
-| ⌨ KBD | Переключить виртуальную клавиатуру |
 
-## Требования
+## Мультиплеер (Maze War LAN)
 
-- iOS 15.0+
-- iPhone или iPad (landscape)
-- Xcode 15 / Swift 5.9
+Оба устройства в одной WiFi сети; HOST на первом, JOIN на втором. UDP порты 7474 (игра) / 7475 (поиск).
