@@ -41,7 +41,8 @@ typedef NS_ENUM(NSInteger, NetStatus) { NetStatusIdle, NetStatusHosting, NetStat
         _bcastSocket = -1;
         _running = NO;
         _netQueue = dispatch_queue_create("net.session", DISPATCH_QUEUE_SERIAL);
-        dispatch_set_target_queue(_netQueue, dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0));
+        // QOS_CLASS_* is iOS 8+; the legacy priority constant works on iOS 7 and maps to a high QoS on newer systems.
+        dispatch_set_target_queue(_netQueue, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0));
         _sendQueue = [NSMutableArray array];
         _sendLock = [[NSLock alloc] init];
         _peerMazeX = 1; _peerMazeY = 1; _peerMazeDir = 0; _peerMazeHp = 3; _peerMazeScore = 0;

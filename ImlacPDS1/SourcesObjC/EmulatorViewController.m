@@ -7,16 +7,17 @@
 #import "NetSession.h"
 #import "MazeWarGame.h"
 
-// iOS 9.3+/12.0-compatible monospaced font helper.
-// UIFont.monospacedSystemFont(ofSize:weight:) requires iOS 13+, so we use
-// the Menlo monospace family (available since iOS 2) with a system-font
-// fallback in case Menlo is ever unavailable.
+// iOS 7.0+ compatible monospaced font helper.
+// UIFont.monospacedSystemFont(ofSize:weight:) requires iOS 13+, so use Menlo
+// with Courier New (present on every iOS) and the system font as fallbacks.
 static UIFont *MonoFont(CGFloat size) {
     UIFont *f = [UIFont fontWithName:@"Menlo-Regular" size:size];
+    if (!f) f = [UIFont fontWithName:@"CourierNewPSMT" size:size];
     return f ?: [UIFont systemFontOfSize:size];
 }
 __unused static UIFont *MonoFontBold(CGFloat size) {
     UIFont *f = [UIFont fontWithName:@"Menlo-Bold" size:size];
+    if (!f) f = [UIFont fontWithName:@"CourierNewPS-BoldMT" size:size];
     return f ?: [UIFont boldSystemFontOfSize:size];
 }
 
@@ -85,17 +86,21 @@ __unused static UIFont *MonoFontBold(CGFloat size) {
 
 - (BOOL)prefersStatusBarHidden { return YES; }
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskLandscape; }
+- (BOOL)shouldAutorotate { return YES; }
 
 #pragma mark - Build UI
 
 - (void)buildUI {
-    CGFloat W = [UIScreen mainScreen].bounds.size.width;
-    CGFloat H = [UIScreen mainScreen].bounds.size.height;
+    // Before iOS 8 UIScreen.bounds is always portrait (e.g. 320x568) even in
+    // landscape. The app is landscape-only, so take the long side as width.
+    CGSize scr = [UIScreen mainScreen].bounds.size;
+    CGFloat W = MAX(scr.width, scr.height);
+    CGFloat H = MIN(scr.width, scr.height);
 
     // CRT display (left ~72%)
     CGFloat crtW = W * 0.72;
     self.crtView = [[CrtView alloc] initWithFrame:CGRectMake(0, 0, crtW, H)];
-    self.crtView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.crtView.autoresizingMask = UIViewAutoresizingNone; // fixed landscape layout (iOS 7 starts with a portrait-sized root view)
     [self.view addSubview:self.crtView];
 
     // Right panel
