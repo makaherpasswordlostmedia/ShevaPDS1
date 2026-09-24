@@ -1,5 +1,6 @@
-# ImlacPDS1 — 32-bit iOS 9.3 (armv7) Theos application
-TARGET := iphone:clang:9.3:9.0
+# ImlacPDS1 — 32-bit iOS 7.x (armv7) Theos application
+# Built with the iPhoneOS 9.3 SDK, deployment target 7.0 (runs on iOS 7.0 - 9.x+).
+TARGET := iphone:clang:9.3:7.0
 ARCHS = armv7
 
 # Theos' default Prefix.pch @imports SDK modules (Darwin/Foundation/UIKit).
