@@ -75,6 +75,28 @@ jobs:
           tar -xjf /tmp/iphoneos9.3.sdk.tbz2 -C "$THEOS/sdks"
           ls "$THEOS/sdks"
 
+      - name: Fix legacy module maps in SDK (clang 19)
+        env:
+          THEOS: ${{ github.workspace }}/theos
+        run: |
+          # clang 19 rejects the old 'module.map' name (-Wdeprecated-module-dot-map)
+          # and refuses to build the Foundation/UIKit modules. Rename to the
+          # modern name, as the compiler itself suggests.
+          SDK="$THEOS/sdks/iPhoneOS9.3.sdk"
+          # framework maps must live in <Framework>/Modules/module.modulemap
+          for fw in "$SDK"/System/Library/Frameworks/*.framework; do
+            if [ -f "$fw/module.map" ]; then
+              mkdir -p "$fw/Modules"
+              mv "$fw/module.map" "$fw/Modules/module.modulemap"
+            fi
+          done
+          # plain include-dir maps (usr/include/**/module.map)
+          find "$SDK/usr/include" -name module.map | while read -r m; do
+            mv "$m" "$(dirname "$m")/module.modulemap"
+          done
+          echo "remaining module.map files:"
+          find "$SDK" -name module.map | wc -l
+
       - name: Build .deb + .app via Theos
         env:
           THEOS: ${{ github.workspace }}/theos
