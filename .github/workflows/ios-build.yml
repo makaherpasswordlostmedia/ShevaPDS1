@@ -1,7 +1,8 @@
-name: Build iOS .ipa (armv7, iOS 9.3)
+name: Build iOS .ipa (armv7, iOS 7.1)
 
-# Cross-compiles ImlacPDS1 (Imlac PDS-1 emulator) for 32-bit iOS 9.3
-# with Theos + clang on ubuntu-latest. No Xcode / no Mac runner required.
+# Cross-compiles ImlacPDS1 (Imlac PDS-1 emulator) for 32-bit iOS 7.1
+# (deployment target 7.0, built against the iPhoneOS 9.3 SDK) with Theos + clang
+# on ubuntu-latest. No Xcode / no Mac runner required.
 
 on:
   push:
@@ -26,7 +27,7 @@ on:
 
 jobs:
   build-ios-armv7:
-    name: Build (Theos / iOS 9.3 / armv7)
+    name: Build (Theos / iOS 7.1 / armv7)
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -121,13 +122,13 @@ jobs:
           fi
           echo "Using APP_DIR=$APP_DIR"
           cp -a "$APP_DIR" ipa_build/Payload/
-          (cd ipa_build && zip -rq ../packages/ImlacPDS1-${{ steps.commit-info.outputs.hash }}-armv7-iOS9.3.ipa Payload)
+          (cd ipa_build && zip -rq ../packages/ImlacPDS1-${{ steps.commit-info.outputs.hash }}-armv7-iOS7.1.ipa Payload)
           ls -la packages
 
       - name: Upload .ipa + .deb artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ImlacPDS1-armv7-iOS9.3-${{ steps.commit-info.outputs.hash }}
+          name: ImlacPDS1-armv7-iOS7.1-${{ steps.commit-info.outputs.hash }}
           path: |
             packages/*.ipa
             packages/*.deb
