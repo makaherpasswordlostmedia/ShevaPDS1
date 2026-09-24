@@ -13,7 +13,7 @@ include $(THEOS)/makefiles/common.mk
 
 APPLICATION_NAME = ImlacPDS1
 
-ImlacPDS1_CFLAGS = -fobjc-arc \
+ImlacPDS1_CFLAGS = -fobjc-arc -O3 \
 	-Wno-deprecated-declarations -Wno-unknown-warning-option \
 	-Wno-error=deprecated-module-dot-map -Wno-deprecated-module-dot-map \
 	-Wno-error=nullability-completeness -Wno-nullability-completeness \
