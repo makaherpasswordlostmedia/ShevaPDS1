@@ -2,19 +2,25 @@
 TARGET := iphone:clang:9.3:9.0
 ARCHS = armv7
 
+# Theos' default Prefix.pch @imports SDK modules (Darwin/Foundation/UIKit).
+# Turning modules off breaks the pch ("module 'Darwin' is needed but has not
+# been provided"), so keep modules ON and just stop clang 19 from treating
+# the legacy module.map files in iPhoneOS9.3.sdk as fatal errors.
+export ADDITIONAL_OBJCFLAGS += -Wno-error=deprecated-module-dot-map -Wno-deprecated-module-dot-map
+
 include $(THEOS)/makefiles/common.mk
 
 APPLICATION_NAME = ImlacPDS1
 
-# clang 19 (toolchain) treats the old-style module.map files inside the
-# legacy iPhoneOS9.3.sdk as an error (-Wdeprecated-module-dot-map), which
-# makes Foundation/UIKit modules fail to build. Silence it, and also build
-# without clang modules so SDK module maps are not needed at all.
-ImlacPDS1_CFLAGS = -fobjc-arc -fno-modules -fno-implicit-modules \
+ImlacPDS1_CFLAGS = -fobjc-arc \
 	-Wno-deprecated-declarations -Wno-unknown-warning-option \
 	-Wno-error=deprecated-module-dot-map -Wno-deprecated-module-dot-map \
 	-Wno-error=nullability-completeness -Wno-nullability-completeness \
-	-Wno-error=unused-command-line-argument -Wno-unused-command-line-argument
+	-Wno-error=unused-command-line-argument -Wno-unused-command-line-argument \
+	-Wno-error=incomplete-umbrella -Wno-incomplete-umbrella \
+	-Wno-error=non-modular-include-in-framework-module \
+	-Wno-non-modular-include-in-framework-module \
+	-Wno-error=non-modular-include-in-module -Wno-non-modular-include-in-module
 
 ImlacPDS1_FILES = \
 	ImlacPDS1/SourcesObjC/AppDelegate.m \
