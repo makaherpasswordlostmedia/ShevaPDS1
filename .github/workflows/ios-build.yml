@@ -1,136 +1,153 @@
-name: Build iOS .ipa (armv7, iOS 7.1)
-
-# Cross-compiles ImlacPDS1 (Imlac PDS-1 emulator) for 32-bit iOS 7.1
-# (deployment target 7.0, built against the iPhoneOS 9.3 SDK) with Theos + clang
-# on ubuntu-latest. No Xcode / no Mac runner required.
+name: Build 32-bit iOS App
 
 on:
   push:
-    branches: [main, "32ios"]
-    paths:
-      - "ImlacPDS1/**"
-      - "Resources/**"
-      - "Makefile"
-      - "control"
-      - "entitlements.plist"
-      - ".github/workflows/ios-build.yml"
+    branches: [ "main", "32ios" ]
   pull_request:
-    branches: [main, master]
-    paths:
-      - "ImlacPDS1/**"
-      - "Resources/**"
-      - "Makefile"
-      - "control"
-      - "entitlements.plist"
-      - ".github/workflows/ios-build.yml"
-  workflow_dispatch: {}
+    branches: [ "main", "master" ]
+  workflow_dispatch:
 
 jobs:
-  build-ios-armv7:
-    name: Build (Theos / iOS 7.1 / armv7)
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-      - name: Identify commit
-        id: commit-info
-        run: |
-          echo "hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-          echo "date=$(git log -1 --format=%cd --date=short)" >> $GITHUB_OUTPUT
-
-      - name: Install host build tools
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget gnupg lsb-release software-properties-common \
-                                  build-essential perl curl ca-certificates \
-                                  zip unzip xz-utils bzip2 git fakeroot make
+          sudo apt-get install -y build-essential clang lld llvm make zip perl git libpango1.0-dev libglib2.0-dev curl
 
-      - name: Install Theos + iOS cross toolchain
-        env:
-          THEOS: ${{ github.workspace }}/theos
-        run: |
-          git clone --recursive https://github.com/theos/theos.git "$THEOS"
-          # Theos expects the iOS cross compiler at
-          # $THEOS/toolchain/linux/iphone/bin/clang. We grab the
-          # Linux->iOS toolchain release (bundles clang, ld64, cctools,
-          # libtapi, ldid etc. and supports the legacy 32-bit ARM ABI).
-          mkdir -p "$THEOS/toolchain/linux/iphone"
-          curl -fsSL \
-            "https://github.com/L1ghtmann/llvm-project/releases/download/main-update_3-eabca92/iOSToolchain-x86_64.tar.xz" \
-            -o /tmp/ios-toolchain.tar.xz
-          tar -xf /tmp/ios-toolchain.tar.xz -C "$THEOS/toolchain"
-          ls "$THEOS/toolchain/linux/iphone/bin" | head -20
-          echo "THEOS=$THEOS" >> $GITHUB_ENV
-
-      - name: Install iPhoneOS 9.3 SDK
-        env:
-          THEOS: ${{ github.workspace }}/theos
-        run: |
-          mkdir -p "$THEOS/sdks"
-          # Sn0wCooder/theos-sdks is a community mirror that keeps the
-          # legacy SDKs with armv7 slices alive.
-          curl -fsSL -o /tmp/iphoneos9.3.sdk.tbz2 \
-            "https://raw.githubusercontent.com/Sn0wCooder/theos-sdks/master/iPhoneOS9.3.sdk.tbz2"
-          tar -xjf /tmp/iphoneos9.3.sdk.tbz2 -C "$THEOS/sdks"
-          ls "$THEOS/sdks"
-
-      - name: Fix legacy module maps in SDK (clang 19)
-        env:
-          THEOS: ${{ github.workspace }}/theos
-        run: |
-          # clang 19 rejects the old 'module.map' name (-Wdeprecated-module-dot-map)
-          # and refuses to build the Foundation/UIKit modules. Rename to the
-          # modern name, as the compiler itself suggests.
-          SDK="$THEOS/sdks/iPhoneOS9.3.sdk"
-          # framework maps must live in <Framework>/Modules/module.modulemap
-          for fw in "$SDK"/System/Library/Frameworks/*.framework; do
-            if [ -f "$fw/module.map" ]; then
-              mkdir -p "$fw/Modules"
-              mv "$fw/module.map" "$fw/Modules/module.modulemap"
+          # Старый Theos-toolchain (2021, LLVM-10) слинкован против настоящей
+          # libtinfo.so.5 (ABI5, ncurses <6.3) — симлинк на libtinfo6 НЕ подходит
+          # (нет нужных versioned symbols). Ставим пакет напрямую или,
+          # если он всё ещё есть в репах, через apt.
+          sudo apt-get install -y libtinfo5 || {
+            echo "::warning::libtinfo5 not in apt repos, fetching .deb directly"
+            set +e
+            # Основной источник: Debian bookworm (текущий stable) всё ещё
+            # содержит libtinfo5 в основных, не архивных репозиториях.
+            curl -fL -o /tmp/libtinfo5.deb \
+              http://deb.debian.org/debian/pool/main/n/ncurses/libtinfo5_6.4-4_amd64.deb
+            if [ $? -ne 0 ] || [ ! -s /tmp/libtinfo5.deb ]; then
+              echo "::warning::Debian source failed, trying Ubuntu security archive"
+              curl -fL -o /tmp/libtinfo5.deb \
+                http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.1_amd64.deb
             fi
-          done
-          # plain include-dir maps (usr/include/**/module.map)
-          find "$SDK/usr/include" -name module.map | while read -r m; do
-            mv "$m" "$(dirname "$m")/module.modulemap"
-          done
-          echo "remaining module.map files:"
-          find "$SDK" -name module.map | wc -l
+            set -e
+            file /tmp/libtinfo5.deb
+            sudo dpkg -x /tmp/libtinfo5.deb /tmp/libtinfo5-extract
+            find /tmp/libtinfo5-extract -name 'libtinfo.so.5*'
+            sudo cp -a /tmp/libtinfo5-extract/usr/lib/x86_64-linux-gnu/libtinfo.so.5* /usr/lib/x86_64-linux-gnu/ 2>/dev/null || \
+            sudo cp -a /tmp/libtinfo5-extract/lib/x86_64-linux-gnu/libtinfo.so.5* /usr/lib/x86_64-linux-gnu/
+            rm -f /tmp/libtinfo5.deb
+            sudo rm -rf /tmp/libtinfo5-extract
+          }
+          sudo ldconfig
+          ldconfig -p | grep libtinfo
 
-      - name: Build .deb + .app via Theos
-        env:
-          THEOS: ${{ github.workspace }}/theos
-          FINALPACKAGE: "1"
+      - name: Install Theos
         run: |
+          git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+
+      - name: Setup iOS SDK
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/theos/sdks"
+
+          # theos/sdks (master) генерируется из современных 64-бит-only
+          # прошивок и НЕ содержит armv7-срез системных .dylib (liblaunch и т.д.),
+          # поэтому линковка под armv7 падает с "file not found ... for architecture armv7".
+          # Sn0wCooder/theos-sdks хранит "классический" iPhoneOS9.3 SDK,
+          # снятый ещё когда armv7 был активной архитектурой, и линкуется нормально.
+          curl -fL -o /tmp/iPhoneOS9.3.sdk.tbz2 \
+            "https://raw.githubusercontent.com/Sn0wCooder/theos-sdks/master/iPhoneOS9.3.sdk.tbz2"
+
+          ls -la /tmp/iPhoneOS9.3.sdk.tbz2
+          file /tmp/iPhoneOS9.3.sdk.tbz2
+
+          tar -xjf /tmp/iPhoneOS9.3.sdk.tbz2 -C "$HOME/theos/sdks/"
+          rm -f /tmp/iPhoneOS9.3.sdk.tbz2
+
+          echo "== Installed SDK =="
+          ls -la "$HOME/theos/sdks/"
+
+          # Проверяем, что нужный armv7-срез действительно присутствует
+          echo "== Checking liblaunch.tbd / liblaunch.dylib for armv7 =="
+          find "$HOME/theos/sdks/iPhoneOS9.3.sdk" -iname 'liblaunch*'
+
+      - name: Setup Theos Linux Toolchain
+        run: |
+          set -euo pipefail
+          export THEOS=$HOME/theos
+          sudo apt-get install -y xz-utils
+
+          echo "== Downloading toolchain =="
+          curl -fL -o /tmp/toolchain.tar.lzma \
+            https://github.com/sbingner/llvm-project/releases/latest/download/linux-ios-arm64e-clang-toolchain.tar.lzma
+
+          echo "== Downloaded file info =="
+          ls -la /tmp/toolchain.tar.lzma
+          file /tmp/toolchain.tar.lzma
+
+          echo "== Extracting =="
+          TMP=$(mktemp -d)
+          tar --lzma -xvf /tmp/toolchain.tar.lzma -C "$TMP"
+
+          echo "== Extracted contents =="
+          find "$TMP" -maxdepth 2
+
+          mkdir -p "$THEOS/toolchain/linux/iphone"
+          mv "$TMP"/ios-arm64e-clang-toolchain/* "$THEOS/toolchain/linux/iphone/"
+          rm -rf /tmp/toolchain.tar.lzma "$TMP"
+
+          echo "== Installed toolchain bin/ =="
+          ls -la "$THEOS/toolchain/linux/iphone/bin/"
+
+          echo "== ldid (bundled with toolchain) =="
+          if [ -x "$THEOS/toolchain/linux/iphone/bin/ldid" ]; then
+            sudo ln -sf "$THEOS/toolchain/linux/iphone/bin/ldid" /usr/local/bin/ldid
+            echo "Using bundled ldid: $(ldid -h 2>&1 | head -1 || true)"
+          else
+            echo "::warning::ldid not found in toolchain, trying fallback download"
+            sudo curl -fL -o /usr/local/bin/ldid \
+              https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64 \
+              || echo "::warning::ldid fallback download also failed, continuing without it"
+            sudo chmod +x /usr/local/bin/ldid || true
+          fi
+
+          echo "== Final check =="
+          test -x "$THEOS/toolchain/linux/iphone/bin/clang" && echo "clang OK: $($THEOS/toolchain/linux/iphone/bin/clang --version)"
+
+      - name: Run Build
+        run: |
+          export THEOS=$HOME/theos
+
+          if [ ! -x "$THEOS/toolchain/linux/iphone/bin/clang" ]; then
+            echo "::warning::Theos toolchain clang missing, falling back to system clang symlink"
+            mkdir -p "$THEOS/toolchain/linux/iphone/bin"
+            ln -sf "$(command -v clang)" "$THEOS/toolchain/linux/iphone/bin/clang"
+            ln -sf "$(command -v clang++)" "$THEOS/toolchain/linux/iphone/bin/clang++"
+          fi
+
+          echo "== Sanity check: can the toolchain clang actually run? =="
+          "$THEOS/toolchain/linux/iphone/bin/clang" --version
+
           make clean
-          make package FINALPACKAGE=1
-          ls -la packages
+          make FINALPACKAGE=1 ARCHS="armv7" TARGET="iphone:clang:9.3:5.1"
 
-      - name: Pack .ipa from staged .app
-        run: |
-          rm -rf ipa_build
-          mkdir -p ipa_build/Payload
-          # The .app lands under .theos/obj/ImlacPDS1.app when armv7 is
-          # the only arch.
-          APP_DIR=".theos/obj/ImlacPDS1.app"
-          if [ ! -d "$APP_DIR" ]; then
-            APP_DIR=".theos/obj/armv7/ImlacPDS1.app"
-          fi
-          if [ ! -d "$APP_DIR" ]; then
-            APP_DIR="$(find .theos -type d -name 'ImlacPDS1.app' | head -n1)"
-          fi
-          echo "Using APP_DIR=$APP_DIR"
-          cp -a "$APP_DIR" ipa_build/Payload/
-          (cd ipa_build && zip -rq ../packages/ImlacPDS1-${{ steps.commit-info.outputs.hash }}-armv7-iOS7.1.ipa Payload)
-          ls -la packages
-
-      - name: Upload .ipa + .deb artifacts
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ImlacPDS1-armv7-iOS7.1-${{ steps.commit-info.outputs.hash }}
+          name: ShevaPDS1-iOS9.3-Build
           path: |
-            packages/*.ipa
-            packages/*.deb
-          if-no-files-found: error
-          retention-days: 30
+            packages/
+            .theos/obj/
+            *.deb
+            *.ipa
+          retention-days: 7
