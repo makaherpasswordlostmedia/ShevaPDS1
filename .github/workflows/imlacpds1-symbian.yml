@@ -1,0 +1,4013 @@
+name: Build Symbian^3 SIS (Imlac PDS-1)
+
+# Port of the iOS Imlac PDS-1 emulator to native Symbian C++ (Avkon).
+# Uses https://github.com/fieldops-dev/symbian3-toolchain, which targets Apple Silicon macOS,
+# so the SIS job runs on a macOS arm64 runner. The first run builds GCC for arm-none-symbianelf
+# (~1.5-2 h) and caches toolchain + SDK; later runs only compile the app (a few minutes).
+#
+# SELF-CONTAINED: this single file carries the whole Symbian port (symbian/ tree) and writes it at
+# build time, so the repo only needs this workflow - no folders to copy.
+
+on:
+  push:
+    branches: [master, main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      net:
+        description: 'LAN multiplayer (needs Open C / libc.lib in the SDK). Untick for an offline build.'
+        type: boolean
+        default: true
+
+env:
+  TOOLCHAIN_REPO: fieldops-dev/symbian3-toolchain
+  TOOLCHAIN_REF: a96f917e6c8f02fe4f7c2186f8df760d3d9d832a
+  SYMBIAN_VOL: /Volumes/Symbian
+  GNUPOC_COMMIT: d3ddaf58c734ad3ab34dc60a012f9d4768a9ed3e
+  GCC4SYMBIAN_COMMIT: fe1b15a1c25716d5c515f12593080d58f14d4c3f
+
+jobs:
+  sources:
+    name: Write port sources
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate symbian/ tree
+        run: |
+          set -e
+          mkdir -p symbian
+          cd symbian
+          cat > README.md <<'IMLAC_EOF'
+          # Imlac PDS-1 for Symbian^3 (Nokia N8 / C7 / E7 …)
+
+          Native Symbian C++ (Avkon) port of the 32-bit iOS Imlac PDS-1 emulator.
+
+          * `src/core/` – portable C++03 core: CPU + display processor + assembler (`Machine`), demos, Maze War
+            (single player and UDP LAN multiplayer, wire-compatible with the iOS app), software phosphor-CRT renderer.
+            No STL / exceptions / RTTI / heap, and no libc or libm (own `Platform.h`, `FMath.cpp`). Only `NetSession.cpp`
+            needs Open C (`libc.lib`) for BSD sockets.
+          * `src/symbian/` – Avkon front end: landscape full screen, touch D-pad + A/B, overlay menu, LAN status/chat.
+          * `host_test/` – desktop checks (`run_tests.sh`): freestanding build of the core, ASan/UBSan smoke tests,
+            rendered preview PNG, type-check of the Symbian layer against API stubs.
+          * `.github/workflows/symbian-build.yml` – CI using fieldops-dev/symbian3-toolchain on a macOS arm64 runner.
+
+          ## Build
+          Push, then Actions → *Build Symbian^3 SIS* → Run workflow. First run builds GCC (~2 h) and caches it.
+          Artifact: `imlacpds1.sisx` (self-signed). Untick **net** for an offline build if the SDK has no Open C.
+          Local: `source symbian3-toolchain/Scripts/env.sh; cd group; bldmake bldfiles; abld build gcce urel;
+          $N8_REPO/Scripts/package-sis.sh ../sis/imlacpds1.pkg`.
+
+          ## Use
+          Touch: D-pad = W/A/S/D, B/A = fire/space, **MENU** (top right) → Machine / Demos / Maze War (single, Host, Join,
+          Disconnect, Send chat). Keys: arrows/WASD, Space/F/select = fire, left softkey or M = menu, other letters/digits go
+          to the Imlac keyboard register. LAN play needs both phones on the same Wi-Fi (ports 7474/7475 UDP); the system may ask
+          for an access point on first use.
+
+          ## Status
+          Verified on a desktop: core logic, renderer, assembler, all demos. **Not yet compiled against the real Symbian SDK
+          or run on a device** – the front end was written without SDK access (type-checked only against stubs) and the
+          network code was not exercised over a real network; expect small include/API fixes on the first CI run
+          (the log is uploaded as the `abld-log` artifact). Differences from iOS: no on-screen Imlac keyboard (hardware keys
+          only), no CRT scanline overlay, single-touch input, vector buffer 8192 instead of 32768, LAN keep-alive packets added.
+          IMLAC_EOF
+          mkdir -p data
+          cat > data/imlacpds1.rss <<'IMLAC_EOF'
+          NAME IMPD
+
+          #include <eikon.rh>
+          #include <avkon.rh>
+          #include <avkon.rsg>
+          #include <appinfo.rh>
+
+          RESOURCE RSS_SIGNATURE { }
+
+          RESOURCE TBUF r_default_document_name { buf = ""; }
+
+          RESOURCE EIK_APP_INFO
+              {
+              }
+
+          RESOURCE LOCALISABLE_APP_INFO r_localisable_app_info
+              {
+              short_caption = "Imlac";
+              caption_and_icon = CAPTION_AND_ICON_INFO
+                  {
+                  caption = "Imlac PDS-1";
+                  number_of_icons = 0;
+                  };
+              }
+
+          // Text entry for the LAN chat (max 15 characters, the wire format carries 15 bytes)
+          RESOURCE DIALOG r_imlac_chat_query
+              {
+              flags = EGeneralQueryFlags;
+              buttons = R_AVKON_SOFTKEYS_OK_CANCEL;
+              items =
+                  {
+                  DLG_LINE
+                      {
+                      type = EAknCtQuery;
+                      id = EGeneralQuery;
+                      control = AVKON_DATA_QUERY
+                          {
+                          layout = EDataLayout;
+                          label = "Chat message";
+                          control = EDWIN
+                              {
+                              flags = EEikEdwinNoHorizScrolling | EEikEdwinResizable;
+                              maxlength = 15;
+                              width = 15;
+                              lines = 1;
+                              };
+                          };
+                      }
+                  };
+              }
+          IMLAC_EOF
+          mkdir -p data
+          cat > data/imlacpds1_reg.rss <<'IMLAC_EOF'
+          #include <appinfo.rh>
+          #include <imlacpds1.rsg>
+
+          UID2 KUidAppRegistrationResourceFile
+          UID3 0xE1A5C0DE
+
+          RESOURCE APP_REGISTRATION_INFO
+              {
+              app_file = "imlacpds1";
+              localisable_resource_file = "\\resource\\apps\\imlacpds1";
+              localisable_resource_id = R_LOCALISABLE_APP_INFO;
+              embeddability = KAppNotEmbeddable;
+              newfile = KAppDoesNotSupportNewFile;
+              }
+          IMLAC_EOF
+          mkdir -p group
+          cat > group/bld.inf <<'IMLAC_EOF'
+          PRJ_PLATFORMS
+          DEFAULT
+
+          PRJ_MMPFILES
+          imlacpds1.mmp
+          IMLAC_EOF
+          mkdir -p group
+          cat > group/imlacpds1.mmp <<'IMLAC_EOF'
+          // Imlac PDS-1 emulator for Symbian^3 / S60 5th edition (Avkon), ported from the 32-bit iOS version.
+          #include <platform_paths.hrh>
+
+          TARGET          imlacpds1.exe
+          TARGETTYPE      exe
+          UID             0x100039CE 0xE1A5C0DE
+          SECUREID        0xE1A5C0DE
+          VENDORID        0
+          // NetworkServices: LAN multiplayer sockets (user-grantable, works with a self-signed SIS)
+          CAPABILITY      NetworkServices
+
+          EPOCSTACKSIZE   0x14000
+          EPOCHEAPSIZE    0x100000 0x1000000
+
+          SOURCEPATH      ../src/symbian
+          SOURCE          imlac_app.cpp
+          SOURCE          imlac_appui.cpp
+          SOURCE          imlac_container.cpp
+
+          SOURCEPATH      ../src/core
+          SOURCE          Machine.cpp
+          SOURCE          Demos.cpp
+          SOURCE          MazeWar.cpp
+          SOURCE          CrtRender.cpp
+          SOURCE          NetSession.cpp
+          SOURCE          Rand.cpp
+          SOURCE          VecFont.cpp
+          SOURCE          FMath.cpp
+
+          USERINCLUDE     ../src/symbian
+          USERINCLUDE     ../src/core
+          APP_LAYER_SYSTEMINCLUDE
+          // Open C headers, needed only by NetSession.cpp (BSD sockets)
+          SYSTEMINCLUDE   /epoc32/include/stdapis
+
+          SOURCEPATH      ../data
+          START RESOURCE  imlacpds1.rss
+          HEADER
+          TARGETPATH      /resource/apps
+          END
+
+          START RESOURCE  imlacpds1_reg.rss
+          TARGETPATH      /private/10003a3f/import/apps
+          END
+
+          LIBRARY         euser.lib apparc.lib cone.lib eikcore.lib avkon.lib eikcoctl.lib eikdlg.lib
+          LIBRARY         fbscli.lib bitgdi.lib gdi.lib ws32.lib
+          // Open C: only for the sockets in NetSession.cpp. The emulator core itself links no C library.
+          LIBRARY         libc.lib
+
+          OPTION          GCCE -O2 -fno-strict-aliasing -fno-tree-loop-distribute-patterns
+          IMLAC_EOF
+          mkdir -p host_test
+          cat > host_test/run_tests.sh <<'IMLAC_EOF'
+          #!/usr/bin/env bash
+          # Host-side checks for the port (no Symbian SDK needed). Run from anywhere: host_test/run_tests.sh
+          set -euo pipefail
+          cd "$(dirname "$0")/.."
+          OUT=host_test/out; mkdir -p "$OUT"
+
+          echo "== 1. core builds with NO system headers (freestanding) and has no libc/libm references"
+          for f in Machine Demos MazeWar CrtRender Rand VecFont FMath; do
+            g++ -std=gnu++98 -O2 -Wall -Wextra -pedantic -fno-exceptions -fno-rtti -nostdinc -ffreestanding \
+                -fno-tree-loop-distribute-patterns -Isrc/core -c src/core/$f.cpp -o $OUT/$f.o
+          done
+          if nm -u $OUT/*.o | grep -E " U (mem|str|sin|cos|sqrt|fmod|fabs|printf|sprintf|snprintf|abs|atoi|malloc|calloc|free|__)" ; then echo "unexpected libc symbol"; exit 1; fi
+
+          echo "== 2. unit/smoke tests under ASan+UBSan"
+          g++ -std=gnu++98 -O1 -g -Wall -Wextra -fno-exceptions -fno-rtti -fsanitize=address,undefined \
+              -fno-sanitize-recover=undefined host_test/test_core.cpp src/core/*.cpp -o $OUT/test_core -lm
+          ( cd $OUT && ./test_core )
+
+          echo "== 3. NetSession (sockets and offline variant)"
+          g++ -std=gnu++98 -fsyntax-only -Wall -Wextra -Isrc/core src/core/NetSession.cpp
+          g++ -std=gnu++98 -fsyntax-only -Wall -Wextra -DIMLAC_NO_NET -nostdinc -ffreestanding -Isrc/core src/core/NetSession.cpp
+
+          echo "== 4. Symbian front end type-check against API stubs"
+          for f in imlac_app imlac_appui imlac_container; do
+            g++ -std=gnu++98 -fsyntax-only -Wall -Wextra -fno-exceptions -fno-rtti \
+                -Ihost_test/stubs -Isrc/symbian -Isrc/core src/symbian/$f.cpp
+          done
+
+          echo "== 5. preview image"
+          python3 - <<'PY' || echo "(Pillow missing - skipping preview)"
+          from PIL import Image
+          names=['star','liss','scope','spacewar','mw_title','mw_play']
+          ims=[Image.open('host_test/out/out_%s.ppm'%n) for n in names]
+          W,H=ims[0].size
+          s=Image.new('RGB',(W*3,H*2))
+          for i,im in enumerate(ims): s.paste(im,((i%3)*W,(i//3)*H))
+          s.save('host_test/out/preview.png'); print('host_test/out/preview.png')
+          PY
+          echo "ALL CHECKS PASSED"
+          IMLAC_EOF
+          mkdir -p host_test
+          cat > host_test/test_core.cpp <<'IMLAC_EOF'
+          // Host-side smoke test for the portable core (no Symbian needed).
+          // Builds with plain g++; exercises the CPU, assembler, all demos, Maze War and the renderer,
+          // and writes a few frames as PPM so the output can be inspected.
+          #include "../src/core/Machine.h"
+          #include "../src/core/Demos.h"
+          #include "../src/core/CrtRender.h"
+          #include "../src/core/NetSession.h"
+          #include "../src/core/Rand.h"
+          #include "../src/core/Platform.h"
+          #include <math.h>
+          #include <stdio.h>
+          #include <string.h>
+          #include <stdlib.h>
+
+          static int failures = 0;
+          #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #c); failures++; } } while (0)
+
+          enum { W = 320, H = 320 };
+          static u32 gFrame[W * H];
+
+          static void savePpm(const char* name) {
+              FILE* f = fopen(name, "wb");
+              if (!f) return;
+              fprintf(f, "P6\n%d %d\n255\n", W, H);
+              for (int i = 0; i < W * H; i++) {
+                  u32 p = gFrame[i];
+                  fputc((int)((p >> 16) & 0xFF), f); fputc((int)((p >> 8) & 0xFF), f); fputc((int)(p & 0xFF), f);
+              }
+              fclose(f);
+          }
+
+          static void runFrames(Machine& m, Demos& d, int n) {
+              for (int i = 0; i < n; i++) {
+                  m.dlClear();
+                  d.runCurrentDemo();
+                  CrtRenderer::render(gFrame, W, H, W, m);
+              }
+          }
+
+          static void testMath() {
+              double worst = 0, worstSq = 0;
+              for (int i = -20000; i <= 20000; i++) {
+                  double x = i * 0.0173;
+                  double e = fabs(fm_sin(x) - sin(x)); if (e > worst) worst = e;
+                  e = fabs(fm_cos(x) - cos(x)); if (e > worst) worst = e;
+              }
+              for (int i = 0; i < 5000; i++) {
+                  double x = i * 3.7;
+                  double e = fabs(fm_sqrt(x) - sqrt(x)); if (e > worstSq) worstSq = e;
+              }
+              printf("fm_sin/cos max error %.2e, fm_sqrt max error %.2e\n", worst, worstSq);
+              CHECK(worst < 1e-4);     // << 1 unit on a 1024-unit display (radius <= 460)
+              CHECK(worstSq < 1e-6);
+              char b[32]; b[0] = 0;
+              str_cat_int(b, sizeof b, 42, 4); str_cat(b, sizeof b, "|"); str_cat_int(b, sizeof b, -7, 0);
+              str_cat(b, sizeof b, "|"); str_cat_hex(b, sizeof b, 0xBEEF, 0);
+              CHECK(str_eq(b, "0042|-7|BEEF"));
+          }
+
+          static void testCpu() {
+              Machine m;
+              const char* prog =
+                  "; add two numbers\n"
+                  ".org 0x50\n"
+                  "start: LAW 5\n"
+                  "  ADD val\n"
+                  "  DAC out\n"
+                  "  HLT\n"
+                  "val: .word 7\n"
+                  "out: .word 0\n";
+              int words = m.assemble(prog);
+              CHECK(words == 6);
+              m.mp_pc = 0x50; m.mp_halt = false; m.mp_run = true;
+              for (int i = 0; i < 20; i++) m.mpStep();
+              CHECK(m.mp_halt);
+              CHECK(m.mem[0x54] == 7);
+              CHECK(m.mem[0x55] == 12);
+              CHECK(strstr(m.console, "HALT") != 0);
+
+              // display processor: set X, Y, draw a short vector
+              Machine d;
+              d.mem[0x100] = 0x1000 | 100;
+              d.mem[0x101] = 0x2000 | 200;
+              d.mem[0x102] = 0x3000 | (10 << 6) | 10;
+              for (int i = 0; i < 3; i++) d.dpStep();
+              CHECK(d.nvec == 1);
+              CHECK(d.vecs[0].x1 == 100 && d.vecs[0].y1 == 200 && d.vecs[0].x2 == 110 && d.vecs[0].y2 == 210);
+              CHECK(d.vecs[0].bright == 255);
+
+              // skip/ISP behaviour + keyboard IOT
+              Machine k;
+              k.keyboard = 'W';
+              k.mem[0] = 0xE000 | (0x01 << 6) | 1;   // IOT kbd, read
+              k.mp_halt = false;
+              k.mpStep();
+              CHECK(k.mp_ac == 'W');
+          }
+
+          static void testDemos() {
+              Machine m; Demos d(m);
+              RandSeed(12345);
+              static const DemoType all[] = { DemoTypeLines, DemoTypeStar, DemoTypeLissajous, DemoTypeText, DemoTypeBounce,
+                                              DemoTypeMaze, DemoTypeSpacewar, DemoTypeScope };
+              static const char* names[] = { "lines", "star", "liss", "text", "bounce", "maze", "spacewar", "scope" };
+              for (unsigned i = 0; i < sizeof(all) / sizeof(all[0]); i++) {
+                  d.setDemo(all[i]);
+                  CrtRenderer::clear(gFrame, W, H, W);
+                  runFrames(m, d, 90);
+                  printf("demo %-8s nvec=%d\n", names[i], m.nvec);
+                  CHECK(m.nvec > 0 && m.nvec < MACHINE_MAX_VEC);
+                  char fn[64]; sprintf(fn, "out_%s.ppm", names[i]);
+                  savePpm(fn);
+              }
+          }
+
+          static void testMazeWar() {
+              Machine m; Demos d(m);
+              RandSeed(777);
+              d.initMazeWar();
+              MazeWarGame* g = d.getMazeWarGame();
+              CHECK(g != 0);
+              d.setDemo(DemoTypeMazeWar);
+
+              CrtRenderer::clear(gFrame, W, H, W);
+              runFrames(m, d, 30);                  // title screen
+              CHECK(m.nvec > 10);
+              savePpm("out_mw_title.ppm");
+
+              g->iFire = true;                      // any button -> start
+              runFrames(m, d, 2);
+              g->iFire = false;
+              // walk / turn / fire for a while, nothing may crash or overflow
+              for (int f = 0; f < 3000; f++) {
+                  m.keyboard = 0;
+                  int r = f % 60;
+                  if (r < 20) m.keyboard = 'W';
+                  else if (r == 30) m.keyboard = 'D';
+                  else if (r == 40) m.keyboard = 32;
+                  else if (r == 50) m.keyboard = 'A';
+                  runFrames(m, d, 1);
+                  CHECK(m.nvec < MACHINE_MAX_VEC);
+                  if (f == 400) savePpm("out_mw_play.ppm");
+              }
+              savePpm("out_mw_end.ppm");
+              printf("mazewar ok, nvec=%d\n", m.nvec);
+
+              // two games with the same seed must build the same maze (multiplayer determinism)
+              Machine m1, m2; MazeWarGame a(m1), b(m2);
+              a.onConnected(true, 123456789); b.onConnected(false, 123456789);
+              m1.dlClear(); m2.dlClear();
+              a.draw(); b.draw();
+              CHECK(m1.nvec > 0);
+          }
+
+          static void testNetLifecycle() {
+              // Only checks that the object can be created/stopped without a network (no sockets are opened here).
+              NetSession n;
+              CHECK(!n.isConnected());
+              n.stop();
+              n.poll();
+          }
+
+          int main() {
+              testMath();
+              testCpu();
+              testDemos();
+              testMazeWar();
+              testNetLifecycle();
+              if (failures) { printf("%d FAILURES\n", failures); return 1; }
+              printf("ALL OK\n");
+              return 0;
+          }
+          IMLAC_EOF
+          mkdir -p sis
+          cat > sis/imlacpds1.pkg <<'IMLAC_EOF'
+          ; Imlac PDS-1 for Symbian^3 - install package (paths are expanded by package-sis.sh)
+          &EN
+          #{"Imlac PDS-1"},(0xE1A5C0DE),1,0,0
+
+          %{"Sheva / Symbian port"}
+          :"Symbian port"
+
+          ; Symbian^3 / S60 5th / S60 3rd platform IDs
+          [0x20022E6D], 0, 0, 0, {"S60ProductID"}
+          [0x1028315F], 0, 0, 0, {"S60ProductID"}
+          [0x102752AE], 0, 0, 0, {"S60ProductID"}
+          [0x102032BE], 0, 0, 0, {"S60ProductID"}
+          [0x101F7961], 0, 0, 0, {"S60ProductID"}
+
+          "$(epocroot)epoc32/release/$(platform)/$(target)/imlacpds1.exe"-"!:\sys\bin\imlacpds1.exe"
+          "$(epocroot)epoc32/data/z/resource/apps/imlacpds1.rsc"-"!:\resource\apps\imlacpds1.rsc"
+          "$(epocroot)epoc32/data/z/private/10003a3f/import/apps/imlacpds1_reg.rsc"-"!:\private\10003a3f\import\apps\imlacpds1_reg.rsc"
+          IMLAC_EOF
+          mkdir -p src/core
+          cat > src/core/CrtRender.cpp <<'IMLAC_EOF'
+          #include "CrtRender.h"
+          #include "Platform.h"
+
+          // Brightness levels are quantised to 10 steps like the iOS renderer.
+          #define CRT_BUCKETS 10
+
+          namespace {
+
+          struct Ctx {
+              u32* px; int w, h, stride;
+              u32 core[CRT_BUCKETS];
+              u32 glow[CRT_BUCKETS];
+              u32 corner[CRT_BUCKETS];
+          };
+
+          inline u32 packRGB(u32 r, u32 g, u32 b) { return (r << 16) | (g << 8) | b; }
+
+          // Saturating per-channel add of two 0x00RRGGBB values.
+          inline void addPx(u32* p, u32 add) {
+              u32 v = *p;
+              u32 rb = (v & 0x00FF00FFu) + (add & 0x00FF00FFu);
+              u32 g  = (v & 0x0000FF00u) + (add & 0x0000FF00u);
+              rb |= ((rb >> 8) & 0x00010001u) * 0xFFu;
+              g  |= ((g >> 16) & 1u) * 0xFF00u;
+              *p = (rb & 0x00FF00FFu) | (g & 0x0000FF00u);
+          }
+
+          inline void plotAdd(Ctx& c, int x, int y, u32 add) {
+              if ((unsigned)x < (unsigned)c.w && (unsigned)y < (unsigned)c.h) addPx(&c.px[y * c.stride + x], add);
+          }
+
+          inline void plotCore(Ctx& c, int x, int y, int k) {
+              plotAdd(c, x, y, c.core[k]);
+              plotAdd(c, x + 1, y, c.glow[k]);
+              plotAdd(c, x - 1, y, c.glow[k]);
+              plotAdd(c, x, y + 1, c.glow[k]);
+              plotAdd(c, x, y - 1, c.glow[k]);
+          }
+
+          void drawLine(Ctx& c, int x0, int y0, int x1, int y1, int k) {
+              int dx = x1 - x0; if (dx < 0) dx = -dx;
+              int dy = y1 - y0; if (dy < 0) dy = -dy;
+              int sx = x0 < x1 ? 1 : -1;
+              int sy = y0 < y1 ? 1 : -1;
+              int err = dx - dy;
+              // Reject lines that are wildly off-screen before walking them.
+              if ((x0 < -64 && x1 < -64) || (y0 < -64 && y1 < -64) ||
+                  (x0 > c.w + 64 && x1 > c.w + 64) || (y0 > c.h + 64 && y1 > c.h + 64)) return;
+              for (;;) {
+                  plotCore(c, x0, y0, k);
+                  if (x0 == x1 && y0 == y1) break;
+                  int e2 = 2 * err;
+                  if (e2 > -dy) { err -= dy; x0 += sx; }
+                  if (e2 < dx)  { err += dx; y0 += sy; }
+              }
+          }
+
+          void drawPoint(Ctx& c, int x, int y, int k) {
+              plotAdd(c, x, y, c.core[k]);
+              plotAdd(c, x + 1, y, c.core[k]);
+              plotAdd(c, x - 1, y, c.core[k]);
+              plotAdd(c, x, y + 1, c.core[k]);
+              plotAdd(c, x, y - 1, c.core[k]);
+              plotAdd(c, x + 1, y + 1, c.glow[k]);
+              plotAdd(c, x - 1, y - 1, c.glow[k]);
+              plotAdd(c, x + 1, y - 1, c.glow[k]);
+              plotAdd(c, x - 1, y + 1, c.glow[k]);
+          }
+
+          }  // namespace
+
+          void CrtRenderer::clear(u32* px, int w, int h, int stride) {
+              for (int y = 0; y < h; y++) mem_set(px + y * stride, 0, (unsigned)w * 4);
+          }
+
+          void CrtRenderer::render(u32* px, int w, int h, int stride, const Machine& m) {
+              // 1) phosphor decay: every channel *= 217/256 (~0.85, same as the 0.15 black fill on iOS)
+              for (int y = 0; y < h; y++) {
+                  u32* row = px + y * stride;
+                  for (int x = 0; x < w; x++) {
+                      u32 v = row[x];
+                      if (!v) continue;
+                      u32 rb = (((v & 0x00FF00FFu) * 217u) >> 8) & 0x00FF00FFu;
+                      u32 g  = ((((v >> 8) & 0xFFu) * 217u) & 0xFF00u);
+                      row[x] = rb | g;
+                  }
+              }
+
+              // 2) colour tables per brightness bucket (green phosphor with a cool core)
+              Ctx c;
+              c.px = px; c.w = w; c.h = h; c.stride = stride;
+              for (int k = 0; k < CRT_BUCKETS; k++) {
+                  u32 a = (u32)(k + 1);                         // 1..10
+                  c.core[k]   = packRGB((a * 26) / 10, (a * 255) / 10, (a * 70) / 10);
+                  c.glow[k]   = packRGB(0, (a * 90) / 10, (a * 22) / 10);
+                  c.corner[k] = packRGB(0, (a * 45) / 10, (a * 11) / 10);
+              }
+
+              // 3) vectors
+              const int sxn = w - 1, syn = h - 1;
+              const int n = m.nvec < MACHINE_MAX_VEC ? m.nvec : MACHINE_MAX_VEC;
+              for (int i = 0; i < n; i++) {
+                  const MachineVec& v = m.vecs[i];
+                  int k = ((int)v.bright * CRT_BUCKETS + 127) / 255;     // 0..10
+                  if (k < 1) continue;                                   // invisible
+                  if (k > CRT_BUCKETS) k = CRT_BUCKETS;
+                  k -= 1;
+                  // PDS Y axis points up (CoreGraphics bitmap origin on iOS is bottom-left), screen rows grow downwards.
+                  int x1 = ((int)v.x1 * sxn) >> 10, y1 = syn - (((int)v.y1 * syn) >> 10);
+                  if (v.isPoint) { drawPoint(c, x1, y1, k); continue; }
+                  int x2 = ((int)v.x2 * sxn) >> 10, y2 = syn - (((int)v.y2 * syn) >> 10);
+                  drawLine(c, x1, y1, x2, y2, k);
+              }
+          }
+          IMLAC_EOF
+          mkdir -p src/core
+          cat > src/core/CrtRender.h <<'IMLAC_EOF'
+          // CrtRender.h - software phosphor-CRT renderer for the display list.
+          //
+          // Replaces CrtView.m (Core Graphics). Draws into a 32-bit 0x00RRGGBB pixel
+          // buffer (Symbian EColor16MU). Each frame: decay the previous image, then add
+          // every vector with a bright core and a soft glow. Pure integer math, no heap.
+          #ifndef IMLAC_CRTRENDER_H
+          #define IMLAC_CRTRENDER_H
+          #include "Types.h"
+          #include "Machine.h"
+
+          #define CRT_PDS 1024
+
+          class CrtRenderer {
+          public:
+              // stride is in 32-bit words (not bytes).
+              static void clear(u32* px, int w, int h, int stride);
+              static void render(u32* px, int w, int h, int stride, const Machine& m);
+          };
+
+          #endif
+          IMLAC_EOF
+          mkdir -p src/core
+          cat > src/core/Demos.cpp <<'IMLAC_EOF'
+          // Demos.cpp - port of Demos.m (itself ported from Demos.swift / Demos.java)
+          #include "Demos.h"
+          #include "Rand.h"
+          #include "VecFont.h"
+          #include "Platform.h"
+
+          Demos::Demos(Machine& machine)
+              : current(DemoTypeStar), frame(0), M(machine), mw(machine), mwReady(false) {
+              angle = 0.0; t = 0.0;
+              ballX = 512.0; ballY = 512.0; ballVx = 7.3; ballVy = 5.8;
+              mem_set(trailX, 0, sizeof(trailX)); mem_set(trailY, 0, sizeof(trailY));
+              trailN = 0;
+              mem_set(mazeGrid, 0, sizeof(mazeGrid));
+              mazeReady = false;
+              sw1x = 350.0; sw1y = 512.0; sw1a = 0.0; sw1vx = 0.0; sw1vy = 0.0;
+              sw2x = 674.0; sw2y = 512.0; sw2a = M_PI; sw2vx = 0.0; sw2vy = 0.0;
+              swInit = false;
+              textScroll = 0.0;
+              mem_set(bx, 0, sizeof(bx)); mem_set(by, 0, sizeof(by));
+              mem_set(bvx, 0, sizeof(bvx)); mem_set(bvy, 0, sizeof(bvy));
+              mem_set(blife, 0, sizeof(blife));
+          }
+
+          void Demos::runCurrentDemo() {
+              switch (current) {
+              case DemoTypeLines:     demoLines(); break;
+              case DemoTypeStar:      demoStar(); break;
+              case DemoTypeLissajous: demoLissajous(); break;
+              case DemoTypeText:      demoText(); break;
+              case DemoTypeBounce:    demoBounce(); break;
+              case DemoTypeMaze:      demoMaze(); break;
+              case DemoTypeSpacewar:  demoSpacewar(); break;
+              case DemoTypeScope:     demoScope(); break;
+              case DemoTypeUserAsm:   break;
+              case DemoTypeMazeWar:   demoMazeWar(); break;
+              }
+              angle += 0.018; t += 0.016; frame += 1;
+              // keep the angle small (all uses are periodic over 20*pi: factors 0.3, 0.7, 2.5, 3 ...)
+              if (angle > 62.83185307179586) angle -= 62.83185307179586;
+          }
+
+          // ---- helpers --------------------------------------------------------------
+
+          void Demos::vl(int x1, int y1, int x2, int y2, float b) { M.dlLine(x1, y1, x2, y2, b); }
+          void Demos::vp(int x, int y, float b) { M.dlPoint(x, y, b); }
+
+          void Demos::rect(int x, int y, int w, int h, float b) {
+              vl(x, y, x + w, y, b);
+              vl(x + w, y, x + w, y + h, b);
+              vl(x + w, y + h, x, y + h, b);
+              vl(x, y + h, x, y, b);
+          }
+
+          void Demos::circle(int cx, int cy, int r, int segs, float b) {
+              int px = cx + r, py = cy;
+              for (int i = 1; i <= segs; i++) {
+                  double a = (double)i / (double)segs * 2 * M_PI;
+                  int nx = cx + (int)(fm_cos(a) * r), ny = cy + (int)(fm_sin(a) * r);
+                  vl(px, py, nx, ny, b);
+                  px = nx; py = ny;
+              }
+          }
+
+          void Demos::border(float b) { rect(20, 20, 984, 984, b); }
+
+          // ---- vector font ----------------------------------------------------------
+
+          void Demos::vchar(char c, int ox, int oy, float sc, float b) {
+              int idx = VecFontIndex(c);
+              if (idx < 0) return;
+              int n = kVecFontSegs[idx];
+              for (int s = 0; s < n; s++) {
+                  const signed char* seg = kVecFont[idx][s];
+                  vl(ox + (int)(seg[0] * sc), oy + (int)(seg[1] * sc), ox + (int)(seg[2] * sc), oy + (int)(seg[3] * sc), b);
+              }
+          }
+
+          void Demos::vtext(const char* s, int ox, int oy, float sc, float b) {
+              int x = ox;
+              for (; *s; ++s) { vchar(*s, x, oy, sc, b); x += (int)(sc * 5.5f); }
+          }
+
+          // ---- LINES ----------------------------------------------------------------
+
+          void Demos::demoLines() {
+              int cx = 512, cy = 512; double r = 450.0;
+              for (int i = 0; i < 20; i++) {
+                  double a1 = (double)i / 20 * 2 * M_PI + angle;
+                  double a2 = (double)(i + 7) / 20 * 2 * M_PI + angle * 0.7;
+                  vl(cx + (int)(fm_cos(a1) * r), cy + (int)(fm_sin(a1) * r),
+                     cx + (int)(fm_cos(a2) * r / 2), cy + (int)(fm_sin(a2) * r / 2), 0.85f);
+              }
+              for (int i = 0; i < 8; i++) {
+                  double a = (double)i / 8 * 2 * M_PI - angle * 0.3;
+                  vl(cx, cy, cx + (int)(fm_cos(a) * r), cy + (int)(fm_sin(a) * r), 0.3f);
+              }
+              border(0.5f);
+              vtext("IMLAC PDS-1", 280, 80, 16, 0.7f);
+              vtext("ROTATING LINES", 200, 30, 10, 0.4f);
+          }
+
+          // ---- STAR -----------------------------------------------------------------
+
+          void Demos::drawStar(int cx, int cy, int pts, int r1, int r2, double a0, float b) {
+              int n = pts * 2;
+              for (int i = 0; i < n; i++) {
+                  double a1 = (double)i / (double)n * 2 * M_PI + a0;
+                  double a2 = (double)(i + 1) / (double)n * 2 * M_PI + a0;
+                  int ra = (i % 2 == 0) ? r1 : r2;
+                  int rb = ((i + 1) % 2 == 0) ? r1 : r2;
+                  vl(cx + (int)(fm_cos(a1) * ra), cy + (int)(fm_sin(a1) * ra),
+                     cx + (int)(fm_cos(a2) * rb), cy + (int)(fm_sin(a2) * rb), b);
+              }
+          }
+
+          void Demos::demoStar() {
+              drawStar(512, 512, 7, 400, 160, angle, 1.0f);
+              drawStar(512, 512, 5, 120, 50, -angle * 2.5, 0.7f);
+              border(0.4f);
+              vtext("STAR", 380, 60, 20, 0.6f);
+          }
+
+          // ---- LISSAJOUS ------------------------------------------------------------
+
+          void Demos::demoLissajous() {
+              int px = -1, py = -1;
+              for (int i = 0; i <= 600; i++) {
+                  double tt = (double)i / 600 * 2 * M_PI;
+                  int x = 512 + (int)(460 * fm_sin(3 * tt + angle));
+                  int y = 512 + (int)(460 * fm_sin(2 * tt));
+                  if (px >= 0) vl(px, py, x, y, 0.85f);
+                  px = x; py = y;
+              }
+              border(0.4f);
+              vtext("LISSAJOUS", 300, 60, 16, 0.5f);
+          }
+
+          // ---- TEXT -----------------------------------------------------------------
+
+          void Demos::demoText() {
+              static const char* const lines[12] = {
+                  "IMLAC PDS-1", "1970 MIT AI LAB", "PROGRAMMED", "DISPLAY SYSTEM",
+                  "16-BIT CPU", "4096 WORDS RAM", "VECTOR CRT", "1024 X 1024", "LIGHT PEN",
+                  "SPACEWAR 1974", "ARPANET NODE", "LOGO LANGUAGE"
+              };
+              const int count = 12;
+              for (int i = 0; i < count; i++) {
+                  double raw = 780.0 - (double)i * 140 + textScroll;
+                  double modv = fm_mod(raw, 1100.0);
+                  if (modv < 0) modv += 1100.0;
+                  int y = (int)modv - 100;
+                  if (y > -80 && y < 1050) vtext(lines[i], 80, y, 20, 0.9f);
+              }
+              textScroll += 1.5;
+              if (textScroll > (double)count * 145) textScroll = 0;
+              border(0.3f);
+          }
+
+          // ---- BOUNCE ---------------------------------------------------------------
+
+          void Demos::demoBounce() {
+              ballX += ballVx; ballY += ballVy;
+              if (ballX < 60 || ballX > 964) { ballVx *= -1; ballX = dmax(60.0, dmin(964.0, ballX)); }
+              if (ballY < 60 || ballY > 964) { ballVy *= -1; ballY = dmax(60.0, dmin(964.0, ballY)); }
+              if (trailN < 15) {
+                  trailX[trailN] = ballX; trailY[trailN] = ballY; trailN += 1;
+              } else {
+                  for (int i = 0; i < 14; i++) { trailX[i] = trailX[i + 1]; trailY[i] = trailY[i + 1]; }
+                  trailX[14] = ballX; trailY[14] = ballY;
+              }
+              for (int i = 0; i < trailN - 1; i++) vp((int)trailX[i], (int)trailY[i], (float)(i + 1) / (float)trailN * 0.4f);
+              circle((int)ballX, (int)ballY, 35, 16, 1.0f);
+              vl((int)ballX - 50, (int)ballY, (int)ballX + 50, (int)ballY, 0.25f);
+              vl((int)ballX, (int)ballY - 50, (int)ballX, (int)ballY + 50, 0.25f);
+              static const int corners[2] = {60, 964};
+              for (int a = 0; a < 2; a++)
+                  for (int c = 0; c < 2; c++) circle(corners[a], corners[c], 20, 8, 0.4f);
+              rect(20, 20, 984, 984, 0.6f);
+              vtext("BOUNCE", 350, 40, 14, 0.6f);
+          }
+
+          // ---- MAZE -----------------------------------------------------------------
+
+          static const int kCDX[4]  = {0, 1, 0, -1};
+          static const int kCDY[4]  = {1, 0, -1, 0};
+          static const int kCOPP[4] = {2, 3, 0, 1};
+
+          void Demos::demoMaze() {
+              if (!mazeReady) initMaze();
+              const int MW = DEMO_MW, MH = DEMO_MH;
+              int cw = (1024 - 60) / MW, ch = (1024 - 60) / MH, ox = 30, oy = 30;
+              for (int y = 0; y < MH; y++) {
+                  for (int x = 0; x < MW; x++) {
+                      int cell = mazeGrid[y][x];
+                      int px = ox + x * cw, py = oy + y * ch;
+                      if (cell & 1) vl(px, py + ch, px + cw, py + ch, 0.85f);
+                      if (cell & 2) vl(px + cw, py, px + cw, py + ch, 0.85f);
+                      if (cell & 4) vl(px, py, px + cw, py, 0.85f);
+                      if (cell & 8) vl(px, py, px, py + ch, 0.85f);
+                  }
+              }
+              circle(ox + cw / 2, oy + ch / 2, 12, 8, 0.6f);
+              circle(ox + (MW - 1) * cw + cw / 2, oy + (MH - 1) * ch + ch / 2, 12, 8, 1.0f);
+              vtext("MAZE", 370, 965, 14, 0.55f);
+          }
+
+          void Demos::initMaze() {
+              for (int y = 0; y < DEMO_MH; y++)
+                  for (int x = 0; x < DEMO_MW; x++) mazeGrid[y][x] = 0xF;
+              bool vis[DEMO_MH][DEMO_MW];
+              mem_set(vis, 0, sizeof(vis));
+              carveMaze(0, 0, vis);
+              mazeReady = true;
+          }
+
+          void Demos::carveMaze(int x, int y, bool vis[DEMO_MH][DEMO_MW]) {
+              vis[y][x] = true;
+              int dirs[4] = {0, 1, 2, 3};
+              for (int i = 3; i > 0; i--) {
+                  int j = (int)RandBelow((u32)(i + 1));
+                  int tmp = dirs[i]; dirs[i] = dirs[j]; dirs[j] = tmp;
+              }
+              for (int k = 0; k < 4; k++) {
+                  int d = dirs[k];
+                  int nx = x + kCDX[d], ny = y + kCDY[d];
+                  if (nx < 0 || nx >= DEMO_MW || ny < 0 || ny >= DEMO_MH || vis[ny][nx]) continue;
+                  mazeGrid[y][x]   &= ~(1 << d);
+                  mazeGrid[ny][nx] &= ~(1 << kCOPP[d]);
+                  carveMaze(nx, ny, vis);
+              }
+          }
+
+          // ---- SPACEWAR -------------------------------------------------------------
+
+          static double wrap1024(double v) { v = fm_mod(v, 1024.0); if (v < 0) v += 1024.0; return v; }
+
+          void Demos::demoSpacewar() {
+              if (!swInit) { mem_set(blife, 0, sizeof(blife)); swInit = true; }
+              sw1a += 0.025; sw2a += 0.025;
+              double dx1 = 512 - sw1x, dy1 = 512 - sw1y; double d1 = fm_sqrt(dx1 * dx1 + dy1 * dy1);
+              if (d1 > 1) { sw1vx += dx1 / d1 * 0.15; sw1vy += dy1 / d1 * 0.15; }
+              double dx2 = 512 - sw2x, dy2 = 512 - sw2y; double d2 = fm_sqrt(dx2 * dx2 + dy2 * dy2);
+              if (d2 > 1) { sw2vx += dx2 / d2 * 0.15; sw2vy += dy2 / d2 * 0.15; }
+              sw1x += sw1vx; sw1y += sw1vy; sw2x += sw2vx; sw2y += sw2vy;
+
+              sw1x = wrap1024(sw1x); sw1y = wrap1024(sw1y);
+              sw2x = wrap1024(sw2x); sw2y = wrap1024(sw2y);
+
+              if (frame % 40 == 0) fireSW(sw1x, sw1y, sw1a, sw1vx, sw1vy);
+              if (frame % 53 == 0) fireSW(sw2x, sw2y, sw2a, sw2vx, sw2vy);
+
+              for (int i = 0; i < 4; i++) {
+                  if (blife[i] <= 0) continue;
+                  blife[i] -= 1;
+                  bx[i] += bvx[i]; by[i] += bvy[i];
+                  vp((int)bx[i], (int)by[i], 1.0f);
+              }
+              circle(512, 512, 25, 12, 0.6f);
+              circle(512, 512, 8, 8, 1.0f);
+              drawShip((int)sw1x, (int)sw1y, sw1a, 1.0f);
+              drawShip((int)sw2x, (int)sw2y, sw2a + M_PI, 0.85f);
+              vtext("SPACEWAR", 310, 960, 14, 0.5f);
+              rect(20, 20, 984, 984, 0.3f);
+          }
+
+          void Demos::fireSW(double x, double y, double a, double vx, double vy) {
+              for (int i = 0; i < 4; i++) {
+                  if (blife[i] > 0) continue;
+                  bx[i] = x; by[i] = y;
+                  bvx[i] = fm_cos(a) * 9 + vx; bvy[i] = fm_sin(a) * 9 + vy;
+                  blife[i] = 80;
+                  break;
+              }
+          }
+
+          void Demos::drawShip(int cx, int cy, double a, float b) {
+              double r1 = 30.0, r2 = 20.0, da = 2.5;
+              int p1x = cx + (int)(fm_cos(a) * r1),      p1y = cy + (int)(fm_sin(a) * r1);
+              int p2x = cx + (int)(fm_cos(a + da) * r2), p2y = cy + (int)(fm_sin(a + da) * r2);
+              int p3x = cx + (int)(fm_cos(a - da) * r2), p3y = cy + (int)(fm_sin(a - da) * r2);
+              vl(p1x, p1y, p2x, p2y, b);
+              vl(p2x, p2y, p3x, p3y, b);
+              vl(p3x, p3y, p1x, p1y, b);
+          }
+
+          // ---- SCOPE ----------------------------------------------------------------
+
+          void Demos::demoScope() {
+              static const double freqA[4] = {1.0, 2.0, 3.0, 5.0};
+              static const double freqB[4] = {1.0, 3.0, 4.0, 4.0};
+              static const float  brs[4]   = {0.9f, 0.7f, 0.55f, 0.4f};
+              for (int f = 0; f < 4; f++) {
+                  double ph = angle * (double)(f + 1) * 0.3;
+                  int px = -1, py = -1;
+                  for (int i = 0; i <= 400; i++) {
+                      double tt = (double)i / 400 * 2 * M_PI;
+                      int x = 512 + (int)(440 * fm_sin(freqA[f] * tt + ph));
+                      int y = 512 + (int)(440 * fm_sin(freqB[f] * tt));
+                      if (px >= 0) vl(px, py, x, y, brs[f]);
+                      px = x; py = y;
+                  }
+              }
+              border(0.4f);
+              vtext("SCOPE", 380, 60, 14, 0.5f);
+          }
+
+          // ---- MAZE WAR -------------------------------------------------------------
+
+          void Demos::demoMazeWar() {
+              mwReady = true;
+              mw.tick();
+              mw.draw();
+          }
+          IMLAC_EOF
+          mkdir -p src/core
+          cat > src/core/Demos.h <<'IMLAC_EOF'
+          // Demos.h - built-in demo programs for the Imlac PDS-1 emulator
+          #ifndef IMLAC_DEMOS_H
+          #define IMLAC_DEMOS_H
+          #include "Types.h"
+          #include "Machine.h"
+          #include "MazeWar.h"
+
+          enum DemoType {
+              DemoTypeLines = 0,
+              DemoTypeStar,
+              DemoTypeLissajous,
+              DemoTypeText,
+              DemoTypeBounce,
+              DemoTypeMaze,
+              DemoTypeSpacewar,
+              DemoTypeScope,
+              DemoTypeUserAsm,
+              DemoTypeMazeWar
+          };
+
+          #define DEMO_MW 18
+          #define DEMO_MH 14
+
+          class Demos {
+          public:
+              explicit Demos(Machine& machine);
+
+              DemoType current;
+              int      frame;
+
+              MazeWarGame* getMazeWarGame() { return mwReady ? &mw : 0; }
+              void initMazeWar() { mwReady = true; }
+              int  currentDemoIndex() const { return (int)current; }
+              void setDemo(DemoType t) { current = t; }
+              void runCurrentDemo();
+
+              void vchar(char c, int ox, int oy, float sc, float b);
+              void vtext(const char* s, int ox, int oy, float sc, float b);
+
+          private:
+              Machine&    M;
+              MazeWarGame mw;
+              bool        mwReady;
+
+              double angle, t;
+              double ballX, ballY, ballVx, ballVy;
+              double trailX[16], trailY[16];
+              int    trailN;
+              int    mazeGrid[DEMO_MH][DEMO_MW];
+              bool   mazeReady;
+              double sw1x, sw1y, sw1a, sw1vx, sw1vy;
+              double sw2x, sw2y, sw2a, sw2vx, sw2vy;
+              double bx[4], by[4], bvx[4], bvy[4];
+              int    blife[4];
+              bool   swInit;
+              double textScroll;
+
+              void vl(int x1, int y1, int x2, int y2, float b);
+              void vp(int x, int y, float b);
+              void rect(int x, int y, int w, int h, float b);
+              void circle(int cx, int cy, int r, int segs, float b);
+              void border(float b);
+              void drawStar(int cx, int cy, int pts, int r1, int r2, double a0, float b);
+              void drawShip(int cx, int cy, double a, float b);
+              void fireSW(double x, double y, double a, double vx, double vy);
+              void initMaze();
+              void carveMaze(int x, int y, bool vis[DEMO_MH][DEMO_MW]);
+
+              void demoLines();
+              void demoStar();
+              void demoLissajous();
+              void demoText();
+              void demoBounce();
+              void demoMaze();
+              void demoSpacewar();
+              void demoScope();
+              void demoMazeWar();
+          };
+
+          #endif
+          IMLAC_EOF
+          mkdir -p src/core
+          cat > src/core/FMath.cpp <<'IMLAC_EOF'
+          // FMath.cpp - sine table + square root (replaces libm; accuracy is far beyond what a 1024-unit
+          // vector display needs). The table is built once on first use by rotating a unit vector.
+          #include "Platform.h"
+
+          #define SIN_N 1024               // table entries per full turn
+
+          static float gSin[SIN_N + 1];
+          static bool  gSinReady = false;
+
+          static void buildSin() {
+              // Taylor series on [0, pi/2] for one quadrant, mirrored for the rest.
+              const double halfPi = M_PI / 2.0;
+              const int q = SIN_N / 4;
+              for (int i = 0; i <= q; i++) {
+                  double x = halfPi * (double)i / (double)q;
+                  double x2 = x * x;
+                  double s = x * (1.0 + x2 * (-1.0 / 6 + x2 * (1.0 / 120 + x2 * (-1.0 / 5040 + x2 * (1.0 / 362880 + x2 * (-1.0 / 39916800))))));
+                  gSin[i] = (float)s;
+                  gSin[SIN_N / 2 - i] = (float)s;
+                  gSin[SIN_N / 2 + i] = (float)-s;
+                  gSin[SIN_N - i] = (float)-s;
+              }
+              gSin[SIN_N] = gSin[0];
+              gSinReady = true;
+          }
+
+          double fm_sin(double x) {
+              if (!gSinReady) buildSin();
+              // Offset keeps the value positive for any angle the demos can produce (|x| < ~2e5).
+              double t = x * ((double)SIN_N / (2.0 * M_PI)) + 4194304.0;     // 4194304 = 4096 turns
+              int i = (int)t;
+              float fr = (float)(t - (double)i);
+              int k = i & (SIN_N - 1);
+              return (double)(gSin[k] + (gSin[k + 1] - gSin[k]) * fr);
+          }
+
+          double fm_cos(double x) { return fm_sin(x + M_PI / 2.0); }
+
+          double fm_sqrt(double x) {
+              if (x <= 0.0) return 0.0;
+              double g = x > 1.0 ? x * 0.5 : 1.0;
+              for (int i = 0; i < 24; i++) {
+                  double n = 0.5 * (g + x / g);
+                  if (fm_abs(n - g) < 1e-9 * g) { g = n; break; }
+                  g = n;
+              }
+              return g;
+          }
+          IMLAC_EOF
+          mkdir -p src/core
+          cat > src/core/Machine.cpp <<'IMLAC_EOF'
+          // Machine.cpp - Imlac PDS-1 emulator core
+          // Port of Machine.m (itself a port of Machine.swift / Machine.java).
+          #include "Machine.h"
+          #include "Platform.h"
+
+          Machine::Machine() {
+              mem_set((void*)this, 0, sizeof(*this));
+              dp_pc = 0x100;
+              dp_x = 512;
+              dp_y = 512;
+              dp_enabled = true;
+              dp_intensity = 7;
+              dp_scale = 1.0f;
+              mp_halt = true;
+          }
+
+          void Machine::reset() {
+              mp_pc = 0; mp_ac = 0; mp_ir = 0; mp_link = 0;
+              mp_halt = true; mp_run = false;
+              dp_pc = 0x100; dp_ac = 0; dp_x = 512; dp_y = 512;
+              dp_halt = false; dp_enabled = true; dp_intensity = 7; dp_scale = 1.0f;
+              dp_ret_top = 0; keyboard = 0; cycles = 0; nvec = 0;
+          }
+
+          void Machine::powerOn() {
+              reset();
+              mp_halt = false;
+              mp_run = true;
+          }
+
+          void Machine::consoleAppend(const char* s) {
+              int n = (int)str_len(s);
+              if (n >= (int)sizeof(console)) { s += n - ((int)sizeof(console) - 1); n = (int)sizeof(console) - 1; }
+              if (consoleLen + n >= (int)sizeof(console)) {
+                  int drop = consoleLen + n - ((int)sizeof(console) - 1);
+                  mem_move(console, console + drop, (unsigned)(consoleLen - drop));
+                  consoleLen -= drop;
+              }
+              mem_cpy(console + consoleLen, s, (unsigned)n);
+              consoleLen += n;
+              console[consoleLen] = 0;
+          }
+
+          // ---- display list ---------------------------------------------------------
+
+          static inline u8 toByte(float b) {
+              if (b <= 0.0f) return 0;
+              if (b >= 1.0f) return 255;
+              return (u8)(b * 255.0f + 0.5f);
+          }
+
+          void Machine::dlLine(int x1, int y1, int x2, int y2, float bright) {
+              if (nvec >= MACHINE_MAX_VEC) return;
+              MachineVec& v = vecs[nvec++];
+              v.x1 = (s16)x1; v.y1 = (s16)y1; v.x2 = (s16)x2; v.y2 = (s16)y2;
+              v.isPoint = 0; v.bright = toByte(bright);
+          }
+
+          void Machine::dlPoint(int x, int y, float bright) {
+              if (nvec >= MACHINE_MAX_VEC) return;
+              MachineVec& v = vecs[nvec++];
+              v.x1 = (s16)x; v.y1 = (s16)y; v.x2 = 0; v.y2 = 0;
+              v.isPoint = 1; v.bright = toByte(bright);
+          }
+
+          // ---- main processor -------------------------------------------------------
+
+          void Machine::mpStep() {
+              if (mp_halt) return;
+              int word = mem[mp_pc & MACHINE_ADDR_MASK] & MACHINE_WORD_MASK;
+              mp_ir = word;
+              mp_pc = (mp_pc + 1) & MACHINE_ADDR_MASK;
+              cycles += 1;
+
+              int op  = (word >> 12) & 0xF;
+              int ind = (word >> 11) & 0x1;
+              int ea  = word & MACHINE_ADDR_MASK;
+              if (ind != 0) ea = mem[ea] & MACHINE_ADDR_MASK;
+
+              switch (op) {
+              case 0x0: break;
+              case 0x1:
+                  if (ind != 0) mp_ac = (-(word & 0x7FF)) & MACHINE_WORD_MASK;
+                  else          mp_ac = (word & 0x7FF);
+                  break;
+              case 0x2: mp_pc = ea; break;
+              case 0x3: mem[ea] = mp_ac; break;
+              case 0x4: { int t = mem[ea]; mem[ea] = mp_ac; mp_ac = t; break; }
+              case 0x5:
+                  mem[ea] = (mem[ea] + 1) & MACHINE_WORD_MASK;
+                  if ((mem[ea] & 0x8000) == 0) mp_pc = (mp_pc + 1) & MACHINE_ADDR_MASK;
+                  break;
+              case 0x6: {
+                  int s = mp_ac + mem[ea];
+                  mp_link = (s >> 16) & 1; mp_ac = s & MACHINE_WORD_MASK;
+                  break;
+              }
+              case 0x7: mp_ac &= mem[ea]; break;
+              case 0x8: mp_ac = mem[ea] & MACHINE_WORD_MASK; break;
+              case 0x9: mem[ea] = mp_pc; mp_pc = (ea + 1) & MACHINE_ADDR_MASK; break;
+              case 0xA: mpSkip(word); break;
+              case 0xB: mp_ac |= mem[ea]; mp_ac &= MACHINE_WORD_MASK; break;
+              case 0xC: {
+                  int n = word & 0xFF; if (n == 0) n = 1;
+                  for (int i = 0; i < n; i++) {
+                      int b = (mp_ac >> 15) & 1;
+                      mp_ac = ((mp_ac << 1) | mp_link) & MACHINE_WORD_MASK; mp_link = b;
+                  }
+                  break;
+              }
+              case 0xD: {
+                  int n = word & 0xFF; if (n == 0) n = 1;
+                  for (int i = 0; i < n; i++) {
+                      int b = mp_ac & 1;
+                      mp_ac = ((mp_ac >> 1) | (mp_link << 15)) & MACHINE_WORD_MASK; mp_link = b;
+                  }
+                  break;
+              }
+              case 0xE: mpIOT(word); break;
+              case 0xF: mpOPR(word); break;
+              default: break;
+              }
+          }
+
+          void Machine::mpSkip(int word) {
+              int inv  = (word >> 5) & 1;
+              int cond = word & 0x1F;
+              bool skip = false;
+              if (cond & 0x01) skip = skip || (mp_ac == 0);
+              if (cond & 0x02) skip = skip || ((mp_ac & 0x8000) == 0);
+              if (cond & 0x04) skip = skip || (mp_link == 0);
+              if (cond & 0x08) skip = skip || (keyboard != 0);
+              if (cond & 0x10) skip = skip || dp_halt;
+              if (inv) skip = !skip;
+              if (skip) mp_pc = (mp_pc + 1) & MACHINE_ADDR_MASK;
+          }
+
+          void Machine::mpOPR(int word) {
+              if (word & 0x800) {
+                  mp_halt = true; mp_run = false;
+                  char tmp[48];
+                  str_set(tmp, sizeof(tmp), "[HALT PC=");
+                  str_cat_hex(tmp, sizeof(tmp), (unsigned)mp_pc, 0);
+                  str_cat(tmp, sizeof(tmp), " AC=");
+                  str_cat_hex(tmp, sizeof(tmp), (unsigned)mp_ac, 0);
+                  str_cat(tmp, sizeof(tmp), "]\n");
+                  consoleAppend(tmp);
+                  return;
+              }
+              if (word & 0x400) mp_ac = 0;
+              if (word & 0x200) mp_link = 0;
+              if (word & 0x100) mp_ac = (~mp_ac) & MACHINE_WORD_MASK;
+              if (word & 0x080) mp_link ^= 1;
+              if (word & 0x040) { int s = mp_ac + 1; mp_link = (s >> 16) & 1; mp_ac = s & MACHINE_WORD_MASK; }
+              if (word & 0x020) mp_link = 1;
+              if (word & 0x010) { int t = mp_ac; mp_ac = dp_ac; dp_ac = t; }
+              if (word & 0x008) { int b = (mp_ac >> 15) & 1; mp_ac = ((mp_ac << 1) | mp_link) & MACHINE_WORD_MASK; mp_link = b; }
+              if (word & 0x004) { int b = mp_ac & 1; mp_ac = ((mp_ac >> 1) | (mp_link << 15)) & MACHINE_WORD_MASK; mp_link = b; }
+          }
+
+          void Machine::mpIOT(int word) {
+              int dev = (word >> 6) & 0x3F;
+              int fn  = word & 0x3F;
+              switch (dev) {
+              case 0x01:
+                  if (fn & 1) mp_ac = keyboard & MACHINE_WORD_MASK;
+                  if (fn & 2) keyboard = 0;
+                  if ((fn & 4) && keyboard != 0) mp_pc = (mp_pc + 1) & MACHINE_ADDR_MASK;
+                  break;
+              case 0x02:
+                  if (fn & 1) dp_enabled = !dp_enabled;
+                  if (fn & 2) { dp_halt = false; dp_pc = mp_ac & MACHINE_ADDR_MASK; }
+                  if (fn & 4) dp_halt = true;
+                  break;
+              case 0x04: {
+                  int c = mp_ac & 0x7F;
+                  if (c >= 32 || c == '\n') { char s[2]; s[0] = (char)c; s[1] = 0; consoleAppend(s); }
+                  break;
+              }
+              case 0x10:
+                  if (fn & 1) mp_ac = lpen_x;
+                  if (fn & 2) mp_ac = lpen_y;
+                  if ((fn & 4) && lpen_hit) mp_pc = (mp_pc + 1) & MACHINE_ADDR_MASK;
+                  break;
+              case 0x20: mp_ac = cycles & MACHINE_WORD_MASK; break;
+              default: break;
+              }
+          }
+
+          // ---- display processor ----------------------------------------------------
+
+          void Machine::dpStep() {
+              if (!(dp_enabled && !dp_halt)) return;
+              int word = mem[dp_pc & MACHINE_ADDR_MASK] & MACHINE_WORD_MASK;
+              dp_pc = (dp_pc + 1) & MACHINE_ADDR_MASK;
+              int op   = (word >> 12) & 0xF;
+              int addr = word & MACHINE_ADDR_MASK;
+              float bright = fmaxf_((float)dp_intensity / 7.0f, 0.05f);
+
+              switch (op) {
+              case 0x0:
+                  if ((word & 0x0E00) == 0x0E00) dp_intensity = word & 0x7;
+                  break;
+              case 0x1: dp_x = addr; break;
+              case 0x2: dp_y = addr; break;
+              case 0x3: {
+                  int dx = (word >> 6) & 0x1F; int dy = word & 0x1F;
+                  if (word & 0x0800) dx = -dx;
+                  if (word & 0x0020) dy = -dy;
+                  int nx = (dp_x + dx) & 1023; int ny = (dp_y + dy) & 1023;
+                  dlLine(dp_x, dp_y, nx, ny, bright);
+                  dp_x = nx; dp_y = ny;
+                  break;
+              }
+              case 0x4: {
+                  int dx = ((word >> 6) & 0x3F) * 8; int dy = (word & 0x3F) * 8;
+                  if (word & 0x0800) dx = -dx;
+                  if (word & 0x0020) dy = -dy;
+                  int nx = (dp_x + dx) & 1023; int ny = (dp_y + dy) & 1023;
+                  dlLine(dp_x, dp_y, nx, ny, bright);
+                  dp_x = nx; dp_y = ny;
+                  break;
+              }
+              case 0x5: dp_pc = addr; break;
+              case 0x6:
+                  if (dp_ret_top < 15) { dp_ret_stack[dp_ret_top] = dp_pc; dp_ret_top += 1; }
+                  dp_pc = addr;
+                  break;
+              case 0x7:
+                  if (word & 0x0800)      dlPoint(dp_x, dp_y, bright);
+                  else if (word & 0x0010) dp_intensity = word & 0x7;
+                  break;
+              case 0x8:
+                  if ((word & 0x0800) && dp_ret_top > 0) { dp_ret_top -= 1; dp_pc = dp_ret_stack[dp_ret_top]; }
+                  else dp_halt = true;
+                  break;
+              case 0x9: dp_intensity = word & 0x7; break;
+              case 0xA: {
+                  static const float sc[4] = {0.25f, 0.5f, 1.0f, 2.0f};
+                  dp_scale = sc[word & 0x3];
+                  break;
+              }
+              case 0xB:
+                  if (dp_ret_top > 0) { dp_ret_top -= 1; dp_pc = dp_ret_stack[dp_ret_top]; }
+                  else dp_halt = true;
+                  break;
+              case 0xC: dp_x = addr; break;
+              case 0xD: dp_y = addr; break;
+              case 0xE: dp_x = (word >> 6) & 0x1F; dp_y = word & 0x1F; break;
+              case 0xF: dp_halt = true; break;
+              default: break;
+              }
+          }
+
+          // ---- assembler ------------------------------------------------------------
+
+          namespace {
+
+          const int kMnemCount = 40;
+          const char* const kMnemNames[kMnemCount] = {
+              "LAW","JMP","DAC","XAM","ISP","ADD","AND","LDA","JMS","IOR",
+              "RAL","RAR","IOT","HLT","CLA","CLL","CMA","CML","IAC","STL","SAM","NOP",
+              "SKZ","SKP","SKL","SKK","SKD","DLXA","DLYA","DSVH","DLVH","DJMP","DJMS",
+              "DPTS","DHLT","DRJM","DEIM","DVSF","RAL1","RAR1"
+          };
+          const u16 kMnemOpc[kMnemCount] = {
+              0x1000,0x2000,0x3000,0x4000,0x5000,0x6000,0x7000,0x8000,0x9000,0xB000,
+              0xC000,0xD000,0xE000,0xF800,0xF400,0xF200,0xF100,0xF080,0xF040,0xF020,0xF010,0xF000,
+              0xA001,0xA002,0xA004,0xA008,0xA010,0x1000,0x2000,0x3000,0x4000,0x5000,0x6000,
+              0x7800,0x8000,0xB000,0x9000,0xA000,0xC001,0xD001
+          };
+          const u8 kMnemHasAddr[kMnemCount] = {
+              1,1,1,1,1,1,1,1,1,1,
+              1,1,1,0,0,0,0,0,0,0,0,0,
+              0,0,0,0,0,1,1,1,1,1,1,
+              0,0,0,1,1,0,0
+          };
+
+          const int kMaxLabels = 96;
+          const int kLabelLen  = 32;
+          const int kMaxTok    = 12;
+
+          struct Labels {
+              char name[kMaxLabels][kLabelLen];
+              int  value[kMaxLabels];
+              int  count;
+          };
+
+          void upcase(char* s) { for (; *s; ++s) *s = up_char(*s); }
+
+          // Splits `line` in place on blanks, tabs and commas; returns token count.
+          int tokenize(char* line, char* tok[]) {
+              int n = 0;
+              char* p = line;
+              while (*p && n < kMaxTok) {
+                  while (*p == ' ' || *p == '\t' || *p == ',' || *p == '\r') p++;
+                  if (!*p) break;
+                  tok[n++] = p;
+                  while (*p && *p != ' ' && *p != '\t' && *p != ',' && *p != '\r') p++;
+                  if (*p) *p++ = 0;
+              }
+              return n;
+          }
+
+          int parseVal(const Labels& L, const char* t) {
+              if (t[0] == '0' && (t[1] == 'x' || t[1] == 'X')) return (int)parse_hex(t + 2);
+              char up[kLabelLen];
+              str_set(up, kLabelLen, t);
+              upcase(up);
+              for (int i = 0; i < L.count; i++) if (str_eq(L.name[i], up)) return L.value[i];
+              return parse_int(t);
+          }
+
+          // Copies the next line of src (without ';' comment) into out; returns pointer to the rest or 0 at end.
+          const char* nextLine(const char* src, char* out, int outSize) {
+              if (!*src) return 0;
+              int n = 0; bool comment = false;
+              while (*src && *src != '\n') {
+                  if (*src == ';') comment = true;
+                  if (!comment && n < outSize - 1) out[n++] = *src;
+                  src++;
+              }
+              out[n] = 0;
+              if (*src == '\n') src++;
+              return src;
+          }
+
+          }  // namespace
+
+          int Machine::assemble(const char* src) {
+              Labels L; L.count = 0;
+              const int baseAddr = 0x050;
+              char line[160];
+              char* tok[kMaxTok];
+
+              // Pass 1: labels
+              int addr = baseAddr;
+              for (const char* p = src; (p = nextLine(p, line, sizeof(line))) != 0; ) {
+                  int n = tokenize(line, tok);
+                  if (n == 0) continue;
+                  char first[kLabelLen]; str_set(first, kLabelLen, tok[0]); upcase(first);
+                  if (str_eq(first, ".ORG") || str_eq(first, "ORG")) { if (n > 1) addr = parseVal(L, tok[1]); continue; }
+                  if (str_eq(first, ".DP") || str_eq(first, ".MP")) continue;
+                  int ti = 0;
+                  unsigned len0 = str_len(tok[0]);
+                  if (tok[0][len0 - 1] == ':') {
+                      if (L.count < kMaxLabels) {
+                          unsigned l = len0 - 1; if (l >= (unsigned)kLabelLen) l = kLabelLen - 1;
+                          mem_cpy(L.name[L.count], tok[0], l); L.name[L.count][l] = 0; upcase(L.name[L.count]);
+                          L.value[L.count++] = addr;
+                      }
+                      ti = 1;
+                      if (n == 1) continue;
+                  }
+                  char mn[kLabelLen]; str_set(mn, kLabelLen, tok[ti]); upcase(mn);
+                  if (str_eq(mn, ".WORD") || str_eq(mn, "DATA")) { addr += n - ti - 1; continue; }
+                  addr += 1;
+              }
+
+              // Pass 2: emit
+              addr = baseAddr;
+              for (const char* p = src; (p = nextLine(p, line, sizeof(line))) != 0; ) {
+                  int n = tokenize(line, tok);
+                  if (n == 0) continue;
+                  char first[kLabelLen]; str_set(first, kLabelLen, tok[0]); upcase(first);
+                  if (str_eq(first, ".ORG") || str_eq(first, "ORG")) { if (n > 1) addr = parseVal(L, tok[1]); continue; }
+                  if (str_eq(first, ".DP") || str_eq(first, ".MP")) continue;
+                  int ti = 0;
+                  if (tok[0][str_len(tok[0]) - 1] == ':') { ti = 1; if (n == 1) continue; }
+                  char mn[kLabelLen]; str_set(mn, kLabelLen, tok[ti]); upcase(mn);
+                  if (str_eq(mn, ".WORD") || str_eq(mn, "DATA")) {
+                      for (int i = ti + 1; i < n; i++) {
+                          if (addr >= 0 && addr < MACHINE_MEM_SIZE) { mem[addr] = parseVal(L, tok[i]); addr += 1; }
+                      }
+                      continue;
+                  }
+                  int mi = -1;
+                  for (int i = 0; i < kMnemCount; i++) if (str_eq(kMnemNames[i], mn)) { mi = i; break; }
+                  if (mi < 0) continue;
+                  int word = kMnemOpc[mi];
+                  if (kMnemHasAddr[mi] && n > ti + 1) {
+                      int val = parseVal(L, tok[ti + 1]);
+                      if ((word & 0xF000) == 0x1000) word |= (val & 0x7FF);
+                      else                            word |= (val & MACHINE_ADDR_MASK);
+                  }
+                  if (addr >= 0 && addr < MACHINE_MEM_SIZE) { mem[addr] = word; addr += 1; }
+              }
+              return addr - baseAddr;
+          }
+          IMLAC_EOF
+          mkdir -p src/core
+          cat > src/core/Machine.h <<'IMLAC_EOF'
+          // Machine.h - Imlac PDS-1 emulator core (portable C++03)
+          #ifndef IMLAC_MACHINE_H
+          #define IMLAC_MACHINE_H
+          #include "Types.h"
+
+          #define MACHINE_MEM_SIZE  4096
+          #define MACHINE_WORD_MASK 0xFFFF
+          #define MACHINE_ADDR_MASK 0x0FFF
+          #define MACHINE_MAX_VEC   8192      // 12 bytes each; the iOS build used 32768
+
+          struct MachineVec {
+              s16 x1, y1, x2, y2;
+              u8  isPoint;
+              u8  bright;                     // 0..255
+          };
+
+          class Machine {
+          public:
+              Machine();
+
+              // MP registers
+              int  mp_pc, mp_ac, mp_ir, mp_link;
+              bool mp_halt, mp_run;
+
+              // DP registers
+              int   dp_pc, dp_ac, dp_x, dp_y;
+              bool  dp_halt, dp_enabled;
+              int   dp_intensity;
+              float dp_scale;
+
+              int mem[MACHINE_MEM_SIZE];
+
+              // I/O
+              int  keyboard;
+              int  lpen_x, lpen_y;
+              bool lpen_hit;
+
+              // Display list
+              MachineVec vecs[MACHINE_MAX_VEC];
+              int        nvec;
+
+              // Console (small ring: oldest text is dropped)
+              char console[256];
+              int  consoleLen;
+              int  cycles;
+
+              void reset();
+              void powerOn();
+
+              void dlLine(int x1, int y1, int x2, int y2, float bright);
+              void dlPoint(int x, int y, float bright);
+              void dlClear() { nvec = 0; }
+
+              void mpStep();
+              void dpStep();
+
+              // Returns number of words emitted (assembly starts at 0x050).
+              int assemble(const char* src);
+
+              void consoleAppend(const char* s);
+
+          private:
+              void mpSkip(int word);
+              void mpOPR(int word);
+              void mpIOT(int word);
+
+              int dp_ret_stack[16];
+              int dp_ret_top;
+          };
+
+          #endif
+          IMLAC_EOF
+          mkdir -p src/core
+          cat > src/core/MazeWar.cpp <<'IMLAC_EOF'
+          // MazeWar.cpp - port of MazeWarGame.m
+          #include "MazeWar.h"
+          #include "NetSession.h"
+          #include "Rand.h"
+          #include "VecFont.h"
+          #include "Platform.h"
+
+          #define VX0 40
+          #define VX1 780
+          #define VY0 80
+          #define VY1 940
+          #define VCX ((VX0 + VX1) / 2)
+          #define VCY ((VY0 + VY1) / 2)
+          #define VW  (VX1 - VX0)
+          #define VH  (VY1 - VY0)
+          #define MZ  MW_MZ
+
+          static const int DX[4]  = {0, 1, 0, -1};
+          static const int DY[4]  = {1, 0, -1, 0};
+          static const int OPP[4] = {2, 3, 0, 1};
+
+          MazeWarGame::MazeWarGame(Machine& machine)
+              : net(0), iUp(false), iDown(false), iLeft(false), iRight(false), iFire(false), M(machine) {
+              for (int i = 0; i < MZ * MZ; i++) maze[i] = 0xF;
+              px = 1; py = 1; pdir = 0; hp = 3; score = 0; level = 1;
+              moveCd = turnCd = fireCd = hitFlash = killFlash = 0;
+              netX = 14; netY = 14; netDir = 2; netHp = 3; netScore = 0;
+              netAlive = true; netHitFlash = 0; multiMode = false; netSendCd = 0;
+              nEnemies = 0;
+              mem_set(enemies, 0, sizeof(enemies));
+              mem_set(bullets, 0, sizeof(bullets));
+              state = EStateTitle; frame = 0; msg[0] = 0; msgT = 0; lobbyStatus[0] = 0;
+              pUp = pDown = pLeft = pRight = pFire = false;
+          }
+
+          void MazeWarGame::setMsg(const char* s, int t) {
+              str_set(msg, sizeof(msg), s); msgT = t;
+          }
+
+          // ---- public API -----------------------------------------------------------
+
+          void MazeWarGame::tick() {
+              int k = M.keyboard & 0x7F;
+              iUp    = iUp    || (k == 'W');
+              iDown  = iDown  || (k == 'S');
+              iLeft  = iLeft  || (k == 'A');
+              iRight = iRight || (k == 'D');
+              iFire  = iFire  || (k == 32 || k == 'F');
+
+              switch (state) {
+              case EStateTitle: tickTitle(); break;
+              case EStateLobby: break;
+              case EStatePlay:  tickPlay();  break;
+              case EStateDead:  tickDead();  break;
+              }
+              pUp = iUp; pDown = iDown; pLeft = iLeft; pRight = iRight; pFire = iFire;
+              iUp = iDown = iLeft = iRight = iFire = false;
+              frame += 1;
+          }
+
+          void MazeWarGame::draw() {
+              switch (state) {
+              case EStateTitle: drawTitle(); break;
+              case EStateLobby: drawLobby(); break;
+              case EStatePlay:  drawPlay();  break;
+              case EStateDead:  drawDead();  break;
+              }
+          }
+
+          void MazeWarGame::startSinglePlayer() {
+              multiMode = false;
+              startGameWithSeed(RandU32());
+          }
+
+          void MazeWarGame::hostMulti(NetSession* n) {
+              net = n; multiMode = true;
+              state = EStateLobby; str_set(lobbyStatus, sizeof(lobbyStatus), "HOSTING... WAIT FOR GUEST");
+          }
+
+          void MazeWarGame::joinMulti(NetSession* n) {
+              net = n; multiMode = true;
+              state = EStateLobby; str_set(lobbyStatus, sizeof(lobbyStatus), "SEARCHING FOR HOST...");
+          }
+
+          void MazeWarGame::stopNet() {
+              if (net) net->stop();
+              net = 0; multiMode = false; state = EStateTitle;
+          }
+
+          // ---- title / lobby / dead -------------------------------------------------
+
+          void MazeWarGame::tickTitle() {
+              bool anyNew = (iUp || iDown || iLeft || iRight || iFire) && !(pUp || pDown || pLeft || pRight || pFire);
+              if (anyNew) startGameWithSeed(RandU32());
+          }
+
+          void MazeWarGame::tickDead() {
+              bool anyNew = (iUp || iDown || iLeft || iRight || iFire) && !(pUp || pDown || pLeft || pRight || pFire);
+              if (anyNew) { multiMode = false; state = EStateTitle; }
+          }
+
+          void MazeWarGame::drawTitle() {
+              int ex = VCX + 100, ey = VCY, rx = 90, ry = 55;
+              circle(ex, ey, rx, ry, 20, 0.9f);
+              circle(ex, ey, rx / 3, (int)(ry * 0.8f), 12, 1.0f);
+              for (int i = -3; i <= 3; i++) {
+                  if (i == 0) continue;
+                  vl(ex + i * 28, ey + ry + 2, ex + i * 28 + i * 5, ey + ry + 28, 0.55f);
+              }
+              txt("MAZE WAR", VX0 + 10, VCY + 60, 18, 1.0f);
+              txt("IMLAC PDS-1  1974", VX0 + 10, VCY + 10, 10, 0.5f);
+              txt("SINGLE  -  ANY BUTTON", VX0 + 10, VCY - 40, 8, 0.4f);
+              txt("MULTI   -  HOST OR JOIN", VX0 + 10, VCY - 70, 8, 0.35f);
+              if ((frame / 20) % 2 == 0) txt("PRESS ANY BUTTON", VX0 + 10, VCY - 110, 9, 0.8f);
+          }
+
+          void MazeWarGame::drawLobby() {
+              static const char* const spin[4] = {"|", "/", "-", "\\"};
+              txt("MAZE WAR  ONLINE", VCX - 200, VCY + 80, 13, 0.9f);
+              txt(lobbyStatus, VCX - (int)str_len(lobbyStatus) * 11, VCY + 10, 11, 0.7f);
+              txt(spin[(frame / 8) % 4], VCX - 10, VCY - 50, 16, 0.6f);
+              txt("CANCEL  -  DISC BUTTON", VCX - 200, VCY - 110, 8, 0.25f);
+          }
+
+          void MazeWarGame::drawDead() {
+              char buf[24];
+              txt("GAME OVER", VCX - 190, VCY + 80, 18, 0.9f);
+              str_set(buf, sizeof(buf), "SCORE "); str_cat_int(buf, sizeof(buf), score, 0);
+              txt(buf, VCX - 160, VCY + 10, 13, 0.7f);
+              if ((frame / 20) % 2 == 0) txt("PRESS ANY BUTTON", VCX - 215, VCY - 70, 11, 0.85f);
+          }
+
+          // ---- maze generation ------------------------------------------------------
+
+          void MazeWarGame::startGameWithSeed(u32 seed) {
+              genMazeWithSeed(seed & 0x7FFFFFFFu);
+              px = 1; py = 1; pdir = 0; hp = 3; score = 0; level = 1;
+              moveCd = turnCd = fireCd = hitFlash = killFlash = 0;
+              mem_set(bullets, 0, sizeof(bullets));
+              nEnemies = 0;
+              if (!multiMode) spawnAI(level + 1);
+              state = EStatePlay;
+          }
+
+          void MazeWarGame::genMazeWithSeed(u32 seed) {
+              for (int i = 0; i < MZ * MZ; i++) maze[i] = 0xF;
+              u32 rng = seed;
+              bool vis[MZ * MZ];
+              mem_set(vis, 0, sizeof(vis));
+              carve(1, 1, vis, &rng);
+          }
+
+          // 32-bit wrap-around LCG: identical on every device, so both peers build the same maze.
+          int MazeWarGame::nextRnd(u32* rng) {
+              *rng = (*rng) * 1664525u + 1013904223u;
+              return (int)((*rng >> 16) & 0x7FFF);
+          }
+
+          void MazeWarGame::carve(int x, int y, bool* vis, u32* rng) {
+              vis[y * MZ + x] = true;
+              int d[4] = {0, 1, 2, 3};
+              for (int i = 3; i >= 1; i--) {
+                  int j = nextRnd(rng) % (i + 1);
+                  int t = d[i]; d[i] = d[j]; d[j] = t;
+              }
+              for (int k = 0; k < 4; k++) {
+                  int dd = d[k];
+                  int nx = x + DX[dd], ny = y + DY[dd];
+                  if (nx < 1 || nx >= MZ - 1 || ny < 1 || ny >= MZ - 1 || vis[ny * MZ + nx]) continue;
+                  maze[y * MZ + x]   &= ~(1 << dd);
+                  maze[ny * MZ + nx] &= ~(1 << OPP[dd]);
+                  carve(nx, ny, vis, rng);
+              }
+          }
+
+          bool MazeWarGame::wall(int x, int y, int dir) const {
+              if (x < 0 || x >= MZ || y < 0 || y >= MZ) return true;
+              return (maze[y * MZ + x] & (1 << dir)) != 0;
+          }
+
+          bool MazeWarGame::solid(int x, int y) const {
+              if (x < 0 || x >= MZ || y < 0 || y >= MZ) return true;
+              return maze[y * MZ + x] == 0xF;
+          }
+
+          void MazeWarGame::spawnAI(int n) {
+              for (int i = 0; i < n && nEnemies < MW_MAX_ENEMY; i++) {
+                  int ex = 0, ey = 0;
+                  for (int tries = 0; tries < 200; tries++) {
+                      ex = 2 + (int)RandBelow((u32)(MZ - 4));
+                      ey = 2 + (int)RandBelow((u32)(MZ - 4));
+                      if (!solid(ex, ey) && (iabs(ex - px) + iabs(ey - py) > 3)) break;
+                  }
+                  Enemy& e = enemies[nEnemies++];
+                  e.x = ex; e.y = ey; e.dir = (int)RandBelow(4); e.think = 30; e.fireCd = 80; e.alive = true;
+              }
+          }
+
+          void MazeWarGame::addBullet(double x, double y, int dir, bool fromPlayer) {
+              for (int i = 0; i < MW_MAX_BULLET; i++) {
+                  if (bullets[i].alive) continue;
+                  Bullet& b = bullets[i];
+                  b.x = x; b.y = y; b.dir = dir; b.life = 55; b.fromPlayer = fromPlayer; b.alive = true;
+                  return;
+              }
+          }
+
+          // ---- play tick ------------------------------------------------------------
+
+          void MazeWarGame::tickPlay() {
+              if (moveCd > 0) moveCd--;
+              if (turnCd > 0) turnCd--;
+              if (fireCd > 0) fireCd--;
+              if (hitFlash > 0) hitFlash--;
+              if (killFlash > 0) killFlash--;
+              if (msgT > 0) msgT--;
+              if (netHitFlash > 0) netHitFlash--;
+
+              if (turnCd == 0) {
+                  if (iLeft && !pLeft)   { pdir = (pdir + 3) % 4; turnCd = 8; }
+                  if (iRight && !pRight) { pdir = (pdir + 1) % 4; turnCd = 8; }
+              }
+              if (moveCd == 0) {
+                  if (iUp && !wall(px, py, pdir)) { px += DX[pdir]; py += DY[pdir]; moveCd = 12; }
+                  else if (iDown && !wall(px, py, (pdir + 2) % 4)) { px -= DX[pdir]; py -= DY[pdir]; moveCd = 12; }
+              }
+              if (iFire && !pFire && fireCd == 0) {
+                  addBullet((double)px + 0.5, (double)py + 0.5, pdir, true);
+                  fireCd = 20;
+                  if (net) net->sendBullet(pdir);
+              }
+              tickBullets();
+              if (!multiMode) { tickAI(); checkWin(); }
+              else if (!netAlive && netHitFlash <= 0) netAlive = true;
+
+              if (multiMode && net && net->isConnected()) {
+                  if (netSendCd <= 0) { net->sendMazeState(px, py, pdir, hp, score); netSendCd = 3; }
+                  else netSendCd--;
+              }
+          }
+
+          void MazeWarGame::tickBullets() {
+              for (int bi = 0; bi < MW_MAX_BULLET; bi++) {
+                  Bullet& b = bullets[bi];
+                  if (!b.alive) continue;
+                  b.life--;
+                  if (b.life <= 0) { b.alive = false; continue; }
+                  b.x += (double)DX[b.dir] * 0.2; b.y += (double)DY[b.dir] * 0.2;
+                  if (solid((int)b.x, (int)b.y)) { b.alive = false; continue; }
+                  if (b.fromPlayer) {
+                      for (int ei = 0; ei < nEnemies; ei++) {
+                          Enemy& e = enemies[ei];
+                          if (!e.alive) continue;
+                          if (fm_abs(b.x - ((double)e.x + 0.5)) < 0.6 && fm_abs(b.y - ((double)e.y + 0.5)) < 0.6) {
+                              e.alive = false; b.alive = false; score += 1; killFlash = 12; setMsg("KILL", 30);
+                              break;
+                          }
+                      }
+                      if (b.alive && multiMode && netAlive &&
+                          fm_abs(b.x - ((double)netX + 0.5)) < 0.6 && fm_abs(b.y - ((double)netY + 0.5)) < 0.6) {
+                          b.alive = false; netAlive = false; netHitFlash = 20; score += 1;
+                          if (net) net->sendKill();
+                          setMsg("YOU KILLED OPPONENT!", 50);
+                      }
+                  } else {
+                      if (fm_abs(b.x - ((double)px + 0.5)) < 0.55 && fm_abs(b.y - ((double)py + 0.5)) < 0.55) {
+                          b.alive = false; hp -= 1; hitFlash = 18;
+                          if (hp > 0) { char t[24]; str_set(t, sizeof(t), "HIT! HP:"); str_cat_int(t, sizeof(t), hp, 0); setMsg(t, 45); }
+                          else        { setMsg("YOU DIED", 45); }
+                          if (hp <= 0) state = EStateDead;
+                      }
+                  }
+              }
+          }
+
+          void MazeWarGame::tickAI() {
+              for (int ei = 0; ei < nEnemies; ei++) {
+                  Enemy& e = enemies[ei];
+                  if (!e.alive) continue;
+                  e.think--; e.fireCd--;
+                  if (e.think <= 0) {
+                      e.think = 15 + (int)RandBelow(25);
+                      int dx = px - e.x, dy = py - e.y;
+                      int want = -1;
+                      if (iabs(dx) > iabs(dy)) want = dx > 0 ? 1 : 3;
+                      else if (dy != 0)        want = dy > 0 ? 0 : 2;
+                      double r = (double)RandU32() / 4294967295.0;
+                      if (r < 0.6 && want >= 0 && !wall(e.x, e.y, want)) {
+                          e.dir = want; e.x += DX[want]; e.y += DY[want];
+                      } else {
+                          int ds[4] = {0, 1, 2, 3};
+                          for (int i = 3; i >= 1; i--) {
+                              int j = (int)RandBelow((u32)(i + 1));
+                              int t = ds[i]; ds[i] = ds[j]; ds[j] = t;
+                          }
+                          for (int k = 0; k < 4; k++) {
+                              int dd = ds[k];
+                              if (!wall(e.x, e.y, dd)) { e.dir = dd; e.x += DX[dd]; e.y += DY[dd]; break; }
+                          }
+                      }
+                  }
+                  if (e.fireCd <= 0) {
+                      bool sh = false;
+                      if (e.dir == 0 && e.x == px && py > e.y) sh = los(e.x, e.y, px, py);
+                      if (e.dir == 2 && e.x == px && py < e.y) sh = los(px, py, e.x, e.y);
+                      if (e.dir == 1 && e.y == py && px > e.x) sh = los(e.x, e.y, px, py);
+                      if (e.dir == 3 && e.y == py && px < e.x) sh = los(px, py, e.x, e.y);
+                      if (sh) {
+                          addBullet((double)e.x + 0.5, (double)e.y + 0.5, e.dir, false);
+                          e.fireCd = 60 + (int)RandBelow(60);
+                      }
+                  }
+              }
+          }
+
+          bool MazeWarGame::los(int x1, int y1, int x2, int y2) const {
+              if (x1 == x2) { for (int y = y1; y < y2; y++) if (wall(x1, y, 0)) return false; }
+              else          { for (int x = x1; x < x2; x++) if (wall(x, y1, 1)) return false; }
+              return true;
+          }
+
+          void MazeWarGame::checkWin() {
+              bool allDead = true;
+              for (int i = 0; i < nEnemies; i++) if (enemies[i].alive) { allDead = false; break; }
+              if (allDead) {
+                  level += 1;
+                  char t[24]; str_set(t, sizeof(t), "LEVEL "); str_cat_int(t, sizeof(t), level, 0); str_cat(t, sizeof(t), "!"); setMsg(t, 60);
+                  genMazeWithSeed(RandU32());
+                  px = 1; py = 1; pdir = 0;
+                  mem_set(bullets, 0, sizeof(bullets));
+                  nEnemies = 0;
+                  spawnAI(imin(level + 1, 7));
+              }
+          }
+
+          // ---- drawing --------------------------------------------------------------
+
+          void MazeWarGame::drawPlay() {
+              vl(VX0, VY0, VX1, VY0, 0.5f); vl(VX1, VY0, VX1, VY1, 0.5f);
+              vl(VX1, VY1, VX0, VY1, 0.5f); vl(VX0, VY1, VX0, VY0, 0.5f);
+              if (hitFlash > 0) {
+                  float f = (float)hitFlash / 18;
+                  vl(VX0, VY0, VX1, VY0, f); vl(VX1, VY0, VX1, VY1, f);
+                  vl(VX1, VY1, VX0, VY1, f); vl(VX0, VY1, VX0, VY0, f);
+              }
+              draw3D(); drawEnemiesInView(); drawHUD();
+              if (msgT > 0) txt(msg, VCX - (int)str_len(msg) * 11, VCY - 60, 13, fminf_(1.0f, (float)msgT / 20));
+              if (multiMode) {
+                  bool connected = net && net->isConnected();
+                  txt(connected ? "NET OK" : "NET...", VX0 + 8, VY0 - 22, 7, 0.4f);
+              }
+          }
+
+          int MazeWarGame::clampX(int x) { return imax(VX0, imin(VX1, x)); }
+          int MazeWarGame::clampY(int y) { return imax(VY0, imin(VY1, y)); }
+
+          void MazeWarGame::draw3D() {
+              const int MAXD = 10;
+              int depth = 0, wx = px, wy = py;
+              for (int d = 1; d <= MAXD; d++) {
+                  if (wall(wx, wy, pdir)) { depth = d - 1; break; }
+                  wx += DX[pdir]; wy += DY[pdir];
+                  if (solid(wx, wy)) { depth = d - 1; break; }
+                  depth = d;
+              }
+              depth = imax(0, depth);
+              int lt[MAXD + 2], rt[MAXD + 2], tp[MAXD + 2], bt[MAXD + 2];
+              for (int d = 0; d <= depth + 1; d++) {
+                  float sc = 1.4f / (float)(d + 1);
+                  lt[d] = clampX(VCX - (int)((float)VW / 2 * sc)); rt[d] = clampX(VCX + (int)((float)VW / 2 * sc));
+                  tp[d] = clampY(VCY - (int)((float)VH / 2 * sc)); bt[d] = clampY(VCY + (int)((float)VH / 2 * sc));
+              }
+              int cx2 = px, cy2 = py;
+              for (int d = 0; d <= depth; d++) {
+                  float bright = fmaxf_(0.2f, 1.0f - (float)d * 0.1f);
+                  bool hl = !wall(cx2, cy2, (pdir + 3) % 4);
+                  bool hr = !wall(cx2, cy2, (pdir + 1) % 4);
+                  bool hf = !wall(cx2, cy2, pdir) && d < depth;
+                  if (!hl) {
+                      vl(lt[d], tp[d], lt[d + 1], tp[d + 1], bright * 0.8f);
+                      vl(lt[d], bt[d], lt[d + 1], bt[d + 1], bright * 0.8f);
+                      vl(lt[d + 1], tp[d + 1], lt[d + 1], bt[d + 1], bright * 0.6f);
+                  } else {
+                      vl(lt[d], tp[d], lt[d], bt[d], bright * 0.5f);
+                  }
+                  if (!hr) {
+                      vl(rt[d], tp[d], rt[d + 1], tp[d + 1], bright * 0.8f);
+                      vl(rt[d], bt[d], rt[d + 1], bt[d + 1], bright * 0.8f);
+                      vl(rt[d + 1], tp[d + 1], rt[d + 1], bt[d + 1], bright * 0.6f);
+                  } else {
+                      vl(rt[d], tp[d], rt[d], bt[d], bright * 0.5f);
+                  }
+                  if (!hf) {
+                      vl(lt[d + 1], tp[d + 1], rt[d + 1], tp[d + 1], bright);
+                      vl(lt[d + 1], bt[d + 1], rt[d + 1], bt[d + 1], bright);
+                      vl(lt[d + 1], tp[d + 1], lt[d + 1], bt[d + 1], bright * 0.8f);
+                      vl(rt[d + 1], tp[d + 1], rt[d + 1], bt[d + 1], bright * 0.8f);
+                      break;
+                  }
+                  cx2 += DX[pdir]; cy2 += DY[pdir];
+              }
+              vl(VX0, VY0, lt[0], tp[0], 0.35f); vl(VX1, VY0, rt[0], tp[0], 0.35f);
+              vl(VX0, VY1, lt[0], bt[0], 0.35f); vl(VX1, VY1, rt[0], bt[0], 0.35f);
+              vl(VCX - 12, VCY, VCX - 4, VCY, 0.6f); vl(VCX + 4, VCY, VCX + 12, VCY, 0.6f);
+              vl(VCX, VCY - 12, VCX, VCY - 4, 0.6f); vl(VCX, VCY + 4, VCX, VCY + 12, 0.6f);
+          }
+
+          void MazeWarGame::drawEnemiesInView() {
+              for (int i = 0; i < nEnemies; i++) if (enemies[i].alive) drawEntityIfVisible(enemies[i].x, enemies[i].y, false);
+              if (multiMode && netAlive) drawEntityIfVisible(netX, netY, true);
+          }
+
+          void MazeWarGame::drawEntityIfVisible(int ex, int ey, bool isNet) {
+              int relDir = -1;
+              if (pdir == 0 && ex == px && ey > py) relDir = 0;
+              if (pdir == 1 && ey == py && ex > px) relDir = 1;
+              if (pdir == 2 && ex == px && ey < py) relDir = 2;
+              if (pdir == 3 && ey == py && ex < px) relDir = 3;
+              if (relDir != pdir) return;
+              int dist = (pdir == 0 || pdir == 2) ? iabs(ey - py) : iabs(ex - px);
+              if (!(dist >= 1 && dist <= 8)) return;
+              for (int d = 0; d < dist; d++) {
+                  if (wall(px + DX[pdir] * d, py + DY[pdir] * d, pdir)) return;
+              }
+              float sc = 1.4f / ((float)dist + 0.5f);
+              int sz = imax(8, imin((int)((float)VH * 0.25f * sc), 120));
+              float b = fmaxf_(0.3f, 0.9f - (float)dist * 0.08f);
+              if (isNet && netHitFlash > 0) b = 1.0f;
+              drawEye(VCX, VCY, sz, b);
+          }
+
+          void MazeWarGame::drawEye(int cx, int cy, int sz, float b) {
+              int rx = sz, ry = (int)((float)sz * 0.55f);
+              circle(cx, cy, rx, ry, 16, b);
+              circle(cx, cy, rx / 3, (int)((float)ry * 0.7f), 10, b * 1.1f);
+              vl(cx - rx, cy, cx + rx, cy, b * 0.3f);
+              if (sz > 25) {
+                  for (int i = -2; i <= 2; i++) {
+                      if (i == 0) continue;
+                      vl(cx + i * (rx / 3), cy + ry + 2, cx + i * (rx / 3) + i * 4, cy + ry + 20, b * 0.6f);
+                  }
+              }
+          }
+
+          void MazeWarGame::drawHUD() {
+              for (int i = 0; i < 3; i++) {
+                  int hx = VX0 + 20 + i * 28;
+                  circle(hx, VY1 + 25, 9, 9, 8, (i < hp ? 0.9f : 0.2f));
+              }
+              char buf[24];
+              buf[0] = 0; str_cat_int(buf, sizeof(buf), score, 4);
+              txt(buf, VX1 - 120, VY1 + 18, 9, 0.7f);
+              static const char* const dirNames[4] = {"N", "E", "S", "W"};
+              txt(dirNames[pdir & 3], VX1 + 15, VY1 + 18, 10, 0.6f);
+              str_set(buf, sizeof(buf), "LV"); str_cat_int(buf, sizeof(buf), level, 0);
+              txt(buf, VCX - 32, VY0 - 22, 9, 0.35f);
+              if (fireCd > 0) vl(VCX - 40, VY1 + 52, VCX - 40 + (int)((float)fireCd / 20 * 80), VY1 + 52, 0.4f);
+              if (multiMode) {
+                  str_set(buf, sizeof(buf), "OPP:"); str_cat_int(buf, sizeof(buf), netScore, 4);
+                  txt(buf, VX0 + 8, VY1 + 18, 9, 0.5f);
+              }
+          }
+
+          void MazeWarGame::vl(int x1, int y1, int x2, int y2, float b) { M.dlLine(x1, y1, x2, y2, b); }
+
+          void MazeWarGame::circle(int cx, int cy, int rx, int ry, int segs, float b) {
+              int ppx = cx + rx, ppy = cy;
+              for (int i = 1; i <= segs; i++) {
+                  double a = (double)i / (double)segs * 2 * M_PI;
+                  int nx = cx + (int)(fm_cos(a) * rx), ny = cy + (int)(fm_sin(a) * ry);
+                  vl(ppx, ppy, nx, ny, b);
+                  ppx = nx; ppy = ny;
+              }
+          }
+
+          void MazeWarGame::glyph(char c, int ox, int oy, float sc, float b) {
+              int idx = VecFontIndex(c);
+              if (idx < 0) return;
+              int n = kVecFontSegs[idx];
+              for (int s = 0; s < n; s++) {
+                  const signed char* seg = kVecFont[idx][s];
+                  vl(ox + (int)(seg[0] * sc), oy + (int)(seg[1] * sc), ox + (int)(seg[2] * sc), oy + (int)(seg[3] * sc), b);
+              }
+          }
+
+          void MazeWarGame::txt(const char* s, int ox, int oy, float sc, float b) {
+              int x = ox;
+              for (; *s; ++s) { glyph(*s, x, oy, sc, b); x += (int)(sc * 5.5f); }
+          }
+
+          // ---- MNetListener ---------------------------------------------------------
+
+          void MazeWarGame::onConnected(bool asHost, int seed) {
+              genMazeWithSeed((u32)seed);
+              if (asHost) { px = 1;  py = 1;  pdir = 0; netX = 14; netY = 14; netDir = 2; }
+              else        { px = 14; py = 14; pdir = 2; netX = 1;  netY = 1;  netDir = 0; }
+              hp = 3; score = 0; netHp = 3; netScore = 0; netAlive = true;
+              mem_set(bullets, 0, sizeof(bullets));
+              state = EStatePlay; setMsg("CONNECTED! FIGHT!", 50);
+          }
+
+          void MazeWarGame::onPeerMazeState(int x, int y, int dir, int hp2, int sc) {
+              netX = x; netY = y; netDir = dir; netHp = hp2; netScore = sc; netAlive = (hp2 > 0);
+          }
+
+          void MazeWarGame::onPeerSync(int, int) {}
+
+          void MazeWarGame::onPeerBullet(int dir) {
+              addBullet((double)netX + 0.5, (double)netY + 0.5, dir & 3, false);
+          }
+
+          void MazeWarGame::onPeerKilled() { netAlive = false; netHitFlash = 20; setMsg("OPPONENT KILLED!", 40); }
+
+          void MazeWarGame::onDisconnected() {
+              setMsg("DISCONNECTED", 80); multiMode = false;
+              state = (state == EStatePlay) ? EStateDead : EStateTitle;
+          }
+
+          void MazeWarGame::onChat(const char*, const char*) {}
+          IMLAC_EOF
+          mkdir -p src/core
+          cat > src/core/MazeWar.h <<'IMLAC_EOF'
+          // MazeWar.h - Maze War (1974) for the Imlac PDS-1 emulator
+          #ifndef IMLAC_MAZEWAR_H
+          #define IMLAC_MAZEWAR_H
+          #include "Types.h"
+          #include "Machine.h"
+          #include "NetListener.h"
+
+          class NetSession;
+
+          #define MW_MZ          16
+          #define MW_MAX_ENEMY   16
+          #define MW_MAX_BULLET  64
+
+          class MazeWarGame : public MNetListener {
+          public:
+              explicit MazeWarGame(Machine& machine);
+
+              NetSession* net;
+
+              // Input flags - set by the UI layer before tick().
+              bool iUp, iDown, iLeft, iRight, iFire;
+
+              void tick();
+              void draw();
+
+              void startSinglePlayer();
+              void hostMulti(NetSession* n);
+              void joinMulti(NetSession* n);
+              void stopNet();
+
+              // MNetListener
+              virtual void onConnected(bool asHost, int seed);
+              virtual void onPeerMazeState(int x, int y, int dir, int hp, int score);
+              virtual void onPeerSync(int demoIdx, int keyboard);
+              virtual void onPeerBullet(int dir);
+              virtual void onPeerKilled();
+              virtual void onDisconnected();
+              virtual void onChat(const char* from, const char* msg);
+
+          private:
+              enum GameState { EStateTitle, EStateLobby, EStatePlay, EStateDead };
+
+              struct Enemy  { int x, y, dir, think, fireCd; bool alive; };
+              struct Bullet { double x, y; int dir, life; bool fromPlayer, alive; };
+
+              Machine& M;
+
+              int  maze[MW_MZ * MW_MZ];
+              int  px, py, pdir, hp, score, level;
+              int  moveCd, turnCd, fireCd, hitFlash, killFlash;
+              int  netX, netY, netDir, netHp, netScore;
+              bool netAlive;
+              int  netHitFlash;
+              bool multiMode;
+              int  netSendCd;
+
+              Enemy  enemies[MW_MAX_ENEMY];
+              int    nEnemies;
+              Bullet bullets[MW_MAX_BULLET];
+
+              GameState state;
+              int  frame;
+              char msg[32];
+              int  msgT;
+              char lobbyStatus[40];
+              bool pUp, pDown, pLeft, pRight, pFire;
+
+              void tickTitle();
+              void tickDead();
+              void tickPlay();
+              void tickBullets();
+              void tickAI();
+              void checkWin();
+
+              void startGameWithSeed(u32 seed);
+              void genMazeWithSeed(u32 seed);
+              void carve(int x, int y, bool* vis, u32* rng);
+              static int nextRnd(u32* rng);
+              bool wall(int x, int y, int dir) const;
+              bool solid(int x, int y) const;
+              void spawnAI(int n);
+              bool los(int x1, int y1, int x2, int y2) const;
+              void addBullet(double x, double y, int dir, bool fromPlayer);
+              void setMsg(const char* s, int t);
+
+              void drawTitle();
+              void drawLobby();
+              void drawDead();
+              void drawPlay();
+              void draw3D();
+              void drawEnemiesInView();
+              void drawEntityIfVisible(int ex, int ey, bool isNet);
+              void drawEye(int cx, int cy, int sz, float b);
+              void drawHUD();
+
+              void vl(int x1, int y1, int x2, int y2, float b);
+              void circle(int cx, int cy, int rx, int ry, int segs, float b);
+              void txt(const char* s, int ox, int oy, float sc, float b);
+              void glyph(char c, int ox, int oy, float sc, float b);
+              static int clampX(int x);
+              static int clampY(int y);
+          };
+
+          #endif
+          IMLAC_EOF
+          mkdir -p src/core
+          cat > src/core/NetListener.h <<'IMLAC_EOF'
+          // NetListener.h - events delivered by NetSession (replaces the two ObjC protocols)
+          #ifndef IMLAC_NETLISTENER_H
+          #define IMLAC_NETLISTENER_H
+
+          class MNetListener {
+          public:
+              virtual void onConnected(bool asHost, int seed) = 0;
+              virtual void onPeerMazeState(int x, int y, int dir, int hp, int score) = 0;
+              virtual void onPeerSync(int demoIdx, int keyboard) = 0;
+              virtual void onPeerBullet(int dir) = 0;
+              virtual void onPeerKilled() = 0;
+              virtual void onDisconnected() = 0;
+              virtual void onChat(const char* from, const char* msg) = 0;
+          };
+
+          #endif
+          IMLAC_EOF
+          mkdir -p src/core
+          cat > src/core/NetSession.cpp <<'IMLAC_EOF'
+          // NetSession.cpp - polled, single-threaded UDP session (BSD sockets / Open C)
+          //
+          // Build with -DIMLAC_NO_NET (MACRO IMLAC_NO_NET in the .mmp, and drop libc.lib) to get an offline
+          // build: the LAN menu items then simply report "network unavailable" and no socket header is needed.
+          #include "NetSession.h"
+          #include "Platform.h"
+
+          #ifdef IMLAC_NO_NET
+
+          NetSession::NetSession()
+              : peerMazeX(1), peerMazeY(1), peerMazeDir(0), peerMazeHp(3), peerMazeScore(0),
+                mazeSeed(0), myId(0), iStatus(EIdle), iGameSock(-1), iBcastSock(-1), iPeerIp(0),
+                iFrame(0), iLastPeerFrame(0), iLastSendFrame(0), iStartFrame(0), iGame(0), iUi(0) {}
+          NetSession::~NetSession() {}
+          void NetSession::host(int) { fail(); }
+          void NetSession::discover() { fail(); }
+          void NetSession::stop() { iStatus = EIdle; }
+          void NetSession::poll() {}
+          void NetSession::fail() {
+              iStatus = EIdle;
+              if (iGame) iGame->onDisconnected();
+              if (iUi)   iUi->onDisconnected();
+          }
+          void NetSession::closeAll() {}
+          void NetSession::pollHost() {}
+          void NetSession::pollGuest() {}
+          void NetSession::pollGame() {}
+          void NetSession::handlePacket(const u8*) {}
+          void NetSession::sendToPeer(const u8*) {}
+          void NetSession::makePacket(u8*, char, int, int, int, int) {}
+          void NetSession::sendSync(int, int) {}
+          void NetSession::sendMazeState(int, int, int, int, int) {}
+          void NetSession::sendBullet(int) {}
+          void NetSession::sendKill() {}
+          void NetSession::sendChat(const char*) {}
+
+          #else   // ---------------------------------------------------------------------
+
+          #include <sys/types.h>
+          #include <sys/socket.h>
+          #include <sys/time.h>
+          #include <netinet/in.h>
+          #include <arpa/inet.h>
+          #include <unistd.h>
+
+          #define NET_PEER_TIMEOUT_FRAMES   150    // ~6 s at 25 fps
+          #define NET_SEARCH_TIMEOUT_FRAMES 750    // ~30 s
+          #define NET_BCAST_EVERY           8      // guest broadcasts every 8 frames
+          #define NET_KEEPALIVE_EVERY       25
+
+          static bool readable(int fd) {
+              fd_set rs;
+              FD_ZERO(&rs);
+              FD_SET(fd, &rs);
+              struct timeval tv;
+              tv.tv_sec = 0; tv.tv_usec = 0;
+              return select(fd + 1, &rs, 0, 0, &tv) > 0;
+          }
+
+          // Returns bytes received (0 when nothing is waiting or on error).
+          static int recvPkt(int fd, u8* buf, struct sockaddr_in* src) {
+              if (fd < 0 || !readable(fd)) return 0;
+              socklen_t len = (socklen_t)sizeof(*src);
+              mem_set(src, 0, sizeof(*src));
+              int n = (int)recvfrom(fd, (char*)buf, NET_PKT, 0, (struct sockaddr*)src, &len);
+              return n > 0 ? n : 0;
+          }
+
+          static int makeUdpSocket(int port, bool broadcast) {
+              int fd = (int)socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+              if (fd < 0) return -1;
+              int on = 1;
+              setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&on, sizeof(on));
+              if (broadcast) setsockopt(fd, SOL_SOCKET, SO_BROADCAST, (const char*)&on, sizeof(on));
+              struct sockaddr_in a;
+              mem_set(&a, 0, sizeof(a));
+              a.sin_family = AF_INET;
+              a.sin_port = htons((unsigned short)port);
+              a.sin_addr.s_addr = htonl(INADDR_ANY);
+              if (bind(fd, (struct sockaddr*)&a, sizeof(a)) < 0) { close(fd); return -1; }
+              return fd;
+          }
+
+          NetSession::NetSession()
+              : peerMazeX(1), peerMazeY(1), peerMazeDir(0), peerMazeHp(3), peerMazeScore(0),
+                mazeSeed(0), myId(0), iStatus(EIdle), iGameSock(-1), iBcastSock(-1), iPeerIp(0),
+                iFrame(0), iLastPeerFrame(0), iLastSendFrame(0), iStartFrame(0), iGame(0), iUi(0) {}
+
+          NetSession::~NetSession() { closeAll(); }
+
+          void NetSession::closeAll() {
+              if (iGameSock >= 0)  { close(iGameSock);  iGameSock = -1; }
+              if (iBcastSock >= 0) { close(iBcastSock); iBcastSock = -1; }
+          }
+
+          void NetSession::host(int seed) {
+              stop();
+              mazeSeed = seed; myId = 0;
+              iGameSock  = makeUdpSocket(NET_PORT_GAME, false);
+              iBcastSock = makeUdpSocket(NET_PORT_BCAST, true);
+              if (iGameSock < 0 || iBcastSock < 0) { fail(); return; }
+              iStatus = EHosting;
+          }
+
+          void NetSession::discover() {
+              stop();
+              myId = 1;
+              iGameSock = makeUdpSocket(NET_PORT_GAME, true);
+              if (iGameSock < 0) { fail(); return; }
+              iStatus = ESearching;
+              iStartFrame = iFrame;
+          }
+
+          void NetSession::stop() {
+              closeAll();
+              iStatus = EIdle;
+              iPeerIp = 0;
+          }
+
+          void NetSession::fail() {
+              bool wasActive = (iStatus != EIdle);
+              closeAll();
+              iStatus = EIdle;
+              iPeerIp = 0;
+              (void)wasActive;
+              if (iGame) iGame->onDisconnected();
+              if (iUi)   iUi->onDisconnected();
+          }
+
+          void NetSession::poll() {
+              iFrame++;
+              switch (iStatus) {
+              case EHosting:    pollHost();  break;
+              case ESearching:  pollGuest(); break;
+              case EConnected:  pollGame();  break;
+              default: break;
+              }
+          }
+
+          void NetSession::makePacket(u8* p, char type, int idv, int demo, int kbd, int seed) {
+              mem_set(p, 0, NET_PKT);
+              p[0] = (u8)type; p[1] = (u8)idv; p[2] = (u8)demo;
+              p[3] = (u8)((kbd >> 8) & 0xFF); p[4] = (u8)(kbd & 0xFF);
+              p[12] = (u8)((seed >> 24) & 0xFF); p[13] = (u8)((seed >> 16) & 0xFF);
+              p[14] = (u8)((seed >> 8) & 0xFF);  p[15] = (u8)(seed & 0xFF);
+          }
+
+          void NetSession::pollHost() {
+              u8 buf[NET_PKT];
+              struct sockaddr_in src;
+
+              // discovery requests -> answer with a welcome packet carrying the maze seed
+              int n = recvPkt(iBcastSock, buf, &src);
+              if (n == NET_PKT && buf[0] == 'D') {
+                  u8 w[NET_PKT];
+                  makePacket(w, 'W', 0, 0, 0, mazeSeed);
+                  sendto(iGameSock, (const char*)w, NET_PKT, 0, (struct sockaddr*)&src, sizeof(src));
+              }
+
+              // join request -> connected
+              n = recvPkt(iGameSock, buf, &src);
+              if (n == NET_PKT && buf[0] == 'J') {
+                  iPeerIp = src.sin_addr.s_addr;
+                  iStatus = EConnected;
+                  iLastPeerFrame = iFrame; iLastSendFrame = iFrame;
+                  int seed = mazeSeed;
+                  if (iGame) iGame->onConnected(true, seed);
+                  if (iUi)   iUi->onConnected(true, seed);
+              }
+          }
+
+          void NetSession::pollGuest() {
+              if (iFrame - iStartFrame > NET_SEARCH_TIMEOUT_FRAMES) { fail(); return; }
+
+              if (((iFrame - iStartFrame) % NET_BCAST_EVERY) == 0) {
+                  u8 d[NET_PKT];
+                  makePacket(d, 'D', 1, 0, 0, 0);
+                  struct sockaddr_in b;
+                  mem_set(&b, 0, sizeof(b));
+                  b.sin_family = AF_INET;
+                  b.sin_port = htons(NET_PORT_BCAST);
+                  b.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+                  sendto(iGameSock, (const char*)d, NET_PKT, 0, (struct sockaddr*)&b, sizeof(b));
+              }
+
+              u8 buf[NET_PKT];
+              struct sockaddr_in src;
+              int n = recvPkt(iGameSock, buf, &src);
+              if (n == NET_PKT && buf[0] == 'W') {
+                  mazeSeed = ((int)buf[12] << 24) | ((int)buf[13] << 16) | ((int)buf[14] << 8) | (int)buf[15];
+                  u8 j[NET_PKT];
+                  makePacket(j, 'J', 1, 0, 0, 0);
+                  sendto(iGameSock, (const char*)j, NET_PKT, 0, (struct sockaddr*)&src, sizeof(src));
+                  iPeerIp = src.sin_addr.s_addr;
+                  iStatus = EConnected;
+                  iLastPeerFrame = iFrame; iLastSendFrame = iFrame;
+                  int seed = mazeSeed;
+                  if (iGame) iGame->onConnected(false, seed);
+                  if (iUi)   iUi->onConnected(false, seed);
+              }
+          }
+
+          void NetSession::pollGame() {
+              u8 buf[NET_PKT];
+              struct sockaddr_in src;
+              for (int i = 0; i < 8 && iStatus == EConnected; i++) {      // drain a few packets per frame
+                  int n = recvPkt(iGameSock, buf, &src);
+                  if (n != NET_PKT) break;
+                  iLastPeerFrame = iFrame;
+                  handlePacket(buf);
+              }
+              if (iStatus != EConnected) return;
+              if (iFrame - iLastPeerFrame > NET_PEER_TIMEOUT_FRAMES) { fail(); return; }
+              if (iFrame - iLastSendFrame > NET_KEEPALIVE_EVERY) sendSync(0, 0);   // keep the peer's timeout from firing
+          }
+
+          void NetSession::handlePacket(const u8* p) {
+              switch ((char)p[0]) {
+              case 'S': {
+                  int demo = p[2], kbd = (p[3] << 8) | p[4];
+                  if (iGame) iGame->onPeerSync(demo, kbd);
+                  if (iUi)   iUi->onPeerSync(demo, kbd);
+                  break;
+              }
+              case 'M': {
+                  int x = p[5], y = p[6], dir = p[7], hp = p[8], sc = (p[9] << 8) | p[10];
+                  peerMazeX = x; peerMazeY = y; peerMazeDir = dir; peerMazeHp = hp; peerMazeScore = sc;
+                  if (iGame) iGame->onPeerMazeState(x, y, dir, hp, sc);
+                  break;
+              }
+              case 'B': if (iGame) iGame->onPeerBullet(p[11]); break;
+              case 'K': if (iGame) iGame->onPeerKilled(); break;
+              case 'C': {
+                  char msg[16]; int i = 0;
+                  for (; i < 15 && p[16 + i]; i++) msg[i] = (char)p[16 + i];
+                  msg[i] = 0;
+                  if (iUi) iUi->onChat("OPP", msg);
+                  break;
+              }
+              case 'X': fail(); break;
+              default: break;
+              }
+          }
+
+          void NetSession::sendToPeer(const u8* pkt) {
+              if (iGameSock < 0 || iPeerIp == 0) return;
+              struct sockaddr_in a;
+              mem_set(&a, 0, sizeof(a));
+              a.sin_family = AF_INET;
+              a.sin_port = htons(NET_PORT_GAME);
+              a.sin_addr.s_addr = iPeerIp;
+              sendto(iGameSock, (const char*)pkt, NET_PKT, 0, (struct sockaddr*)&a, sizeof(a));
+              iLastSendFrame = iFrame;
+          }
+
+          void NetSession::sendSync(int demoIdx, int keyboard) {
+              if (!isConnected()) return;
+              u8 p[NET_PKT]; mem_set(p, 0, sizeof(p));
+              p[0] = 'S'; p[1] = (u8)myId; p[2] = (u8)demoIdx;
+              p[3] = (u8)((keyboard >> 8) & 0xFF); p[4] = (u8)(keyboard & 0xFF);
+              sendToPeer(p);
+          }
+
+          void NetSession::sendMazeState(int x, int y, int dir, int hp, int score) {
+              if (!isConnected()) return;
+              u8 p[NET_PKT]; mem_set(p, 0, sizeof(p));
+              p[0] = 'M'; p[1] = (u8)myId;
+              p[5] = (u8)x; p[6] = (u8)y; p[7] = (u8)dir; p[8] = (u8)hp;
+              p[9] = (u8)((score >> 8) & 0xFF); p[10] = (u8)(score & 0xFF);
+              sendToPeer(p);
+          }
+
+          void NetSession::sendBullet(int dir) {
+              if (!isConnected()) return;
+              u8 p[NET_PKT]; mem_set(p, 0, sizeof(p));
+              p[0] = 'B'; p[1] = (u8)myId; p[11] = (u8)dir;
+              sendToPeer(p);
+          }
+
+          void NetSession::sendKill() {
+              if (!isConnected()) return;
+              u8 p[NET_PKT]; mem_set(p, 0, sizeof(p));
+              p[0] = 'K'; p[1] = (u8)myId;
+              sendToPeer(p);
+          }
+
+          void NetSession::sendChat(const char* text) {
+              if (!isConnected()) return;
+              u8 p[NET_PKT]; mem_set(p, 0, sizeof(p));
+              p[0] = 'C'; p[1] = (u8)myId;
+              int len = (int)str_len(text); if (len > 15) len = 15;
+              for (int i = 0; i < len; i++) p[16 + i] = (u8)text[i];
+              sendToPeer(p);
+              if (iUi) iUi->onChat("ME", text);
+          }
+
+          #endif  // IMLAC_NO_NET
+          IMLAC_EOF
+          mkdir -p src/core
+          cat > src/core/NetSession.h <<'IMLAC_EOF'
+          // NetSession.h - UDP LAN multiplayer, wire-compatible with the iOS build
+          // (ports 7474 game / 7475 discovery, 32-byte packets).
+          //
+          // Unlike the iOS version there is no worker thread: poll() is called once per
+          // frame from the UI timer and uses select() with a zero timeout, so nothing
+          // ever blocks and no locking is needed. All timeouts are counted in frames.
+          #ifndef IMLAC_NETSESSION_H
+          #define IMLAC_NETSESSION_H
+          #include "Types.h"
+          #include "NetListener.h"
+
+          #define NET_PORT_GAME   7474
+          #define NET_PORT_BCAST  7475
+          #define NET_PKT         32
+
+          class NetSession {
+          public:
+              NetSession();
+              ~NetSession();
+
+              // Two listeners: the game logic and the UI (status line / chat).
+              void setListeners(MNetListener* game, MNetListener* ui) { iGame = game; iUi = ui; }
+
+              void host(int seed);
+              void discover();
+              void stop();
+              void poll();                       // call once per frame
+              bool isConnected() const { return iStatus == EConnected; }
+              bool isActive() const    { return iStatus != EIdle; }
+
+              int peerMazeX, peerMazeY, peerMazeDir, peerMazeHp, peerMazeScore;
+              int mazeSeed;
+              int myId;
+
+              void sendSync(int demoIdx, int keyboard);
+              void sendMazeState(int x, int y, int dir, int hp, int score);
+              void sendBullet(int dir);
+              void sendKill();
+              void sendChat(const char* text);
+
+          private:
+              enum Status { EIdle, EHosting, ESearching, EConnected };
+
+              void pollHost();
+              void pollGuest();
+              void pollGame();
+              void handlePacket(const u8* p);
+              void fail();
+              void closeAll();
+              void sendToPeer(const u8* pkt);
+              void makePacket(u8* p, char type, int idv, int demo, int kbd, int seed);
+
+              Status iStatus;
+              int    iGameSock, iBcastSock;
+              u32    iPeerIp;                    // network byte order
+              u32    iFrame, iLastPeerFrame, iLastSendFrame, iStartFrame;
+              MNetListener* iGame;
+              MNetListener* iUi;
+          };
+
+          #endif
+          IMLAC_EOF
+          mkdir -p src/core
+          cat > src/core/Platform.h <<'IMLAC_EOF'
+          // Platform.h - tiny libc/libm replacements so the core needs neither <string.h>, <stdio.h>,
+          // <stdlib.h> nor <math.h> (the Symbian build links no C library for the core).
+          #ifndef IMLAC_PLATFORM_H
+          #define IMLAC_PLATFORM_H
+          #include "Types.h"
+
+          // ---- memory / strings -------------------------------------------------------
+
+          static inline void mem_set(void* d, int v, unsigned n) {
+              u8* p = (u8*)d;
+              while (n--) *p++ = (u8)v;
+          }
+          static inline void mem_cpy(void* d, const void* s, unsigned n) {
+              u8* dd = (u8*)d; const u8* ss = (const u8*)s;
+              while (n--) *dd++ = *ss++;
+          }
+          static inline void mem_move(void* d, const void* s, unsigned n) {
+              u8* dd = (u8*)d; const u8* ss = (const u8*)s;
+              if (dd < ss) { while (n--) *dd++ = *ss++; }
+              else { dd += n; ss += n; while (n--) *--dd = *--ss; }
+          }
+          static inline unsigned str_len(const char* s) { unsigned n = 0; while (s[n]) n++; return n; }
+          static inline bool str_eq(const char* a, const char* b) {
+              while (*a && *a == *b) { a++; b++; }
+              return *a == *b;
+          }
+          static inline char up_char(char c) { return (c >= 'a' && c <= 'z') ? (char)(c - 32) : c; }
+          // Copies at most cap-1 chars and always terminates.
+          static inline void str_set(char* dst, int cap, const char* src) {
+              int i = 0;
+              while (src[i] && i < cap - 1) { dst[i] = src[i]; i++; }
+              dst[i] = 0;
+          }
+          static inline void str_cat(char* dst, int cap, const char* src) {
+              int n = (int)str_len(dst), i = 0;
+              while (src[i] && n < cap - 1) dst[n++] = src[i++];
+              dst[n] = 0;
+          }
+          // Appends an integer in the given base (10 or 16), padded to minWidth with '0'.
+          static inline void str_cat_num(char* dst, int cap, unsigned v, int base, int minWidth, bool negative) {
+              char tmp[16]; int n = 0;
+              if (v == 0) tmp[n++] = '0';
+              while (v && n < 15) { unsigned d = v % (unsigned)base; tmp[n++] = (char)(d < 10 ? '0' + d : 'A' + d - 10); v /= (unsigned)base; }
+              while (n < minWidth && n < 15) tmp[n++] = '0';
+              char out[18]; int o = 0;
+              if (negative) out[o++] = '-';
+              while (n) out[o++] = tmp[--n];
+              out[o] = 0;
+              str_cat(dst, cap, out);
+          }
+          static inline void str_cat_int(char* dst, int cap, int v, int minWidth) {
+              if (v < 0) str_cat_num(dst, cap, (unsigned)(-v), 10, minWidth, true);
+              else       str_cat_num(dst, cap, (unsigned)v, 10, minWidth, false);
+          }
+          static inline void str_cat_hex(char* dst, int cap, unsigned v, int minWidth) {
+              str_cat_num(dst, cap, v, 16, minWidth, false);
+          }
+          static inline int parse_int(const char* s) {
+              int sign = 1, v = 0;
+              while (*s == ' ' || *s == '\t') s++;
+              if (*s == '-') { sign = -1; s++; } else if (*s == '+') s++;
+              while (*s >= '0' && *s <= '9') { v = v * 10 + (*s - '0'); s++; }
+              return v * sign;
+          }
+          static inline unsigned parse_hex(const char* s) {
+              unsigned v = 0;
+              for (;; s++) {
+                  char c = *s;
+                  if (c >= '0' && c <= '9') v = v * 16 + (unsigned)(c - '0');
+                  else if (c >= 'a' && c <= 'f') v = v * 16 + (unsigned)(c - 'a' + 10);
+                  else if (c >= 'A' && c <= 'F') v = v * 16 + (unsigned)(c - 'A' + 10);
+                  else break;
+              }
+              return v;
+          }
+
+          // ---- math (table based, no libm) --------------------------------------------
+
+          double fm_sin(double x);
+          double fm_cos(double x);
+          double fm_sqrt(double x);
+          static inline double fm_abs(double x) { return x < 0 ? -x : x; }
+          // like fmod for |x| < 2^31 * m
+          static inline double fm_mod(double x, double m) { return x - m * (double)(int)(x / m); }
+
+          #endif
+          IMLAC_EOF
+          mkdir -p src/core
+          cat > src/core/Rand.cpp <<'IMLAC_EOF'
+          #include "Rand.h"
+
+          static u32 gState = 0x9E3779B9u;
+
+          void RandSeed(u32 seed) { gState = seed ? seed : 0x9E3779B9u; }
+
+          u32 RandU32() {
+              u32 x = gState;            // xorshift32
+              x ^= x << 13;
+              x ^= x >> 17;
+              x ^= x << 5;
+              gState = x;
+              return x;
+          }
+
+          u32 RandBelow(u32 n) { return n ? (RandU32() % n) : 0; }
+          IMLAC_EOF
+          mkdir -p src/core
+          cat > src/core/Rand.h <<'IMLAC_EOF'
+          // Rand.h - small deterministic PRNG (replaces arc4random from the iOS code)
+          #ifndef IMLAC_RAND_H
+          #define IMLAC_RAND_H
+          #include "Types.h"
+
+          void RandSeed(u32 seed);
+          u32  RandU32();
+          u32  RandBelow(u32 n);   // 0 .. n-1, n must be > 0
+
+          #endif
+          IMLAC_EOF
+          mkdir -p src/core
+          cat > src/core/Types.h <<'IMLAC_EOF'
+          // Types.h - fixed-size types and tiny helpers shared by the portable core.
+          // The core is plain C++03 (no STL, no exceptions, no RTTI, no heap) so it
+          // builds unchanged with the Symbian GCCE toolchain and with host g++.
+          #ifndef IMLAC_TYPES_H
+          #define IMLAC_TYPES_H
+
+          typedef unsigned char  u8;
+          typedef unsigned short u16;
+          typedef unsigned int   u32;
+          typedef short          s16;
+
+          typedef char imlac_int_must_be_32_bit[(sizeof(int) == 4) ? 1 : -1];
+
+          static inline int iabs(int v)            { return v < 0 ? -v : v; }
+          static inline int imin(int a, int b)     { return a < b ? a : b; }
+          static inline int imax(int a, int b)     { return a > b ? a : b; }
+          static inline float fminf_(float a, float b) { return a < b ? a : b; }
+          static inline float fmaxf_(float a, float b) { return a > b ? a : b; }
+          static inline double dmin(double a, double b) { return a < b ? a : b; }
+          static inline double dmax(double a, double b) { return a > b ? a : b; }
+
+          #ifndef M_PI
+          #define M_PI 3.14159265358979323846
+          #endif
+
+          #endif
+          IMLAC_EOF
+          mkdir -p src/core
+          cat > src/core/VecFont.cpp <<'IMLAC_EOF'
+          // VecFont.cpp - 37-glyph vector font (A-Z, 0-9, space), glyph cell is 4x4 units, Y down
+          #include "VecFont.h"
+
+          const signed char kVecFont[VECFONT_GLYPHS][VECFONT_MAXSEG][4] = {
+              {{0,0,2,4},{2,4,4,0},{1,2,3,2}},
+              {{0,0,0,4},{0,4,2,4},{0,2,2,2},{0,0,2,0},{2,4,3,3},{3,3,2,2},{2,2,3,1},{3,1,2,0}},
+              {{3,4,0,4},{0,4,0,0},{0,0,3,0}},
+              {{0,0,0,4},{0,4,2,4},{2,4,4,2},{4,2,2,0},{2,0,0,0}},
+              {{0,0,0,4},{0,4,4,4},{0,2,3,2},{0,0,4,0}},
+              {{0,0,0,4},{0,4,4,4},{0,2,3,2}},
+              {{3,4,0,4},{0,4,0,0},{0,0,4,0},{4,0,4,2},{4,2,2,2}},
+              {{0,0,0,4},{4,0,4,4},{0,2,4,2}},
+              {{1,0,3,0},{1,4,3,4},{2,0,2,4}},
+              {{1,4,3,4},{3,4,3,0},{3,0,0,0}},
+              {{0,0,0,4},{0,2,4,4},{0,2,4,0}},
+              {{0,4,0,0},{0,0,4,0}},
+              {{0,0,0,4},{0,4,2,2},{2,2,4,4},{4,4,4,0}},
+              {{0,0,0,4},{0,4,4,0},{4,0,4,4}},
+              {{0,0,4,0},{4,0,4,4},{4,4,0,4},{0,4,0,0}},
+              {{0,0,0,4},{0,4,3,4},{3,4,4,3},{4,3,3,2},{3,2,0,2}},
+              {{0,0,4,0},{4,0,4,4},{4,4,0,4},{0,4,0,0},{2,2,4,0}},
+              {{0,0,0,4},{0,4,3,4},{3,4,4,3},{4,3,3,2},{3,2,0,2},{2,2,4,0}},
+              {{4,4,0,4},{0,4,0,2},{0,2,4,2},{4,2,4,0},{4,0,0,0}},
+              {{0,4,4,4},{2,4,2,0}},
+              {{0,4,0,0},{0,0,4,0},{4,0,4,4}},
+              {{0,4,2,0},{2,0,4,4}},
+              {{0,4,1,0},{1,0,2,2},{2,2,3,0},{3,0,4,4}},
+              {{0,0,4,4},{4,0,0,4}},
+              {{0,4,2,2},{4,4,2,2},{2,2,2,0}},
+              {{0,4,4,4},{4,4,0,0},{0,0,4,0}},
+              {{0,0,4,0},{4,0,4,4},{4,4,0,4},{0,4,0,0},{0,0,4,4}},
+              {{1,4,2,4},{2,4,2,0},{1,0,3,0}},
+              {{0,4,4,4},{4,4,4,3},{4,3,0,1},{0,1,0,0},{0,0,4,0}},
+              {{0,4,4,4},{4,4,4,0},{0,0,4,0},{0,2,4,2}},
+              {{0,4,0,2},{0,2,4,2},{4,4,4,0}},
+              {{4,4,0,4},{0,4,0,2},{0,2,4,2},{4,2,4,0},{4,0,0,0}},
+              {{4,4,0,4},{0,4,0,0},{0,0,4,0},{4,0,4,2},{4,2,0,2}},
+              {{0,4,4,4},{4,4,2,0}},
+              {{0,0,4,0},{4,0,4,4},{4,4,0,4},{0,4,0,0},{0,2,4,2}},
+              {{4,0,4,4},{4,4,0,4},{0,4,0,2},{0,2,4,2}},
+              {},
+          };
+          const unsigned char kVecFontSegs[VECFONT_GLYPHS] = {3,8,3,5,4,3,5,3,3,3,3,2,4,3,4,5,5,6,5,2,3,2,4,2,3,3,5,3,5,4,3,5,5,2,5,4,0};
+
+          int VecFontIndex(char c) {
+              if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+              if (c >= 'A' && c <= 'Z') return c - 'A';
+              if (c >= '0' && c <= '9') return 26 + (c - '0');
+              if (c == ' ') return 36;
+              return -1;
+          }
+          IMLAC_EOF
+          mkdir -p src/core
+          cat > src/core/VecFont.h <<'IMLAC_EOF'
+          // VecFont.h - shared vector font used by the demos and by Maze War
+          #ifndef IMLAC_VECFONT_H
+          #define IMLAC_VECFONT_H
+
+          #define VECFONT_GLYPHS 37
+          #define VECFONT_MAXSEG 8
+
+          extern const signed char kVecFont[VECFONT_GLYPHS][VECFONT_MAXSEG][4];
+          extern const unsigned char kVecFontSegs[VECFONT_GLYPHS];
+
+          // Returns glyph index for c (case-insensitive), or -1 if there is no glyph.
+          int VecFontIndex(char c);
+
+          #endif
+          IMLAC_EOF
+          mkdir -p src/symbian
+          cat > src/symbian/imlac.h <<'IMLAC_EOF'
+          // imlac.h - Symbian^3 / S60 5th front end for the Imlac PDS-1 emulator core.
+          #ifndef IMLAC_H
+          #define IMLAC_H
+
+          #include <aknapp.h>
+          #include <akndoc.h>
+          #include <aknappui.h>
+          #include <coecntrl.h>
+          #include <e32base.h>
+          #include <fbs.h>
+
+          #include "Machine.h"
+          #include "Demos.h"
+          #include "CrtRender.h"
+          #include "NetSession.h"
+
+          const TUid KUidImlac = { (TInt32)0xE1A5C0DE };
+
+          // ---------------------------------------------------------------------------
+          // Main control: CRT view, touch controls, overlay menu, LAN status/chat.
+          // ---------------------------------------------------------------------------
+          class CImlacContainer : public CCoeControl, public MNetListener
+              {
+          public:
+              static CImlacContainer* NewL(const TRect& aRect);
+              ~CImlacContainer();
+              void SetForeground(TBool aForeground);
+
+              // CCoeControl
+              void Draw(const TRect& aRect) const;
+              void SizeChanged();
+              void HandlePointerEventL(const TPointerEvent& aEvent);
+              TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
+
+              // MNetListener
+              void onConnected(bool aAsHost, int aSeed);
+              void onPeerMazeState(int aX, int aY, int aDir, int aHp, int aScore);
+              void onPeerSync(int aDemoIdx, int aKeyboard);
+              void onPeerBullet(int aDir);
+              void onPeerKilled();
+              void onDisconnected();
+              void onChat(const char* aFrom, const char* aMsg);
+
+          private:
+              CImlacContainer();
+              void ConstructL(const TRect& aRect);
+
+              static TInt TickCb(TAny* aPtr);
+              void Tick();
+              void StartTimer();
+              void StopTimer();
+
+              void ComputeLayout();
+              void PressButton(TInt aTag, TBool aDown);
+              TInt HitTest(const TPoint& aPt) const;
+
+              void OpenMenu();
+              void CloseMenu();
+              void ExecCommandL(TInt aCmd);
+              void MenuActivate(TInt aIndex);
+              TRect MenuBox() const;
+
+              void StartMazeWar();
+              void HostGame();
+              void JoinGame();
+              void Disconnect();
+              void AskChatL();
+              void AddChat(const char* aLine);
+              void SetNetStatus(const char* aText);
+
+              void DrawButton(CWindowGc& aGc, const TRect& aRect, const TDesC& aLabel, TBool aDown) const;
+              void DrawStr(CWindowGc& aGc, const char* aText, TInt aX, TInt aBaseline) const;
+              void DrawMenu(CWindowGc& aGc) const;
+
+              // emulator
+              Machine     iMachine;
+              Demos       iDemos;
+              NetSession  iNet;
+
+              CFbsBitmap* iFrame;
+              CPeriodic*  iTimer;
+              TBool       iForeground;
+
+              // UI state
+              TBool       iMenu;
+              TInt        iMenuPage;
+              TInt        iMenuSel;
+              TInt        iHeld;               // button currently held by the finger, -1 if none
+              TBool       iDown[6];            // pressed state of up/down/left/right/B/A
+              char        iNetStatus[40];
+              char        iChat[4][24];
+              TInt        iChatCount;
+
+              // stats
+              TUint       iFpsStart;
+              TInt        iFpsCount;
+              TInt        iFps;
+
+              // layout
+              TRect       iCrtRect;
+              TRect       iBtn[6];
+              TRect       iBtnMenu;
+              TRect       iLeftPanel, iRightPanel;
+              };
+
+          // ---------------------------------------------------------------------------
+          class CImlacAppUi : public CAknAppUi
+              {
+          public:
+              void ConstructL();
+              ~CImlacAppUi();
+              void HandleCommandL(TInt aCommand);
+              void HandleForegroundEventL(TBool aForeground);
+              void HandleResourceChangeL(TInt aType);
+          private:
+              CImlacContainer* iContainer;
+              };
+
+          class CImlacDocument : public CAknDocument
+              {
+          public:
+              CImlacDocument(CEikApplication& aApp) : CAknDocument(aApp) {}
+          private:
+              CEikAppUi* CreateAppUiL();
+              };
+
+          class CImlacApplication : public CAknApplication
+              {
+          private:
+              CApaDocument* CreateDocumentL();
+              TUid AppDllUid() const;
+              };
+
+          #endif
+          IMLAC_EOF
+          mkdir -p src/symbian
+          cat > src/symbian/imlac_app.cpp <<'IMLAC_EOF'
+          // Application / document / entry point.
+          #include <eikstart.h>
+          #include "imlac.h"
+
+          CApaDocument* CImlacApplication::CreateDocumentL()
+              {
+              return new (ELeave) CImlacDocument(*this);
+              }
+
+          TUid CImlacApplication::AppDllUid() const
+              {
+              return KUidImlac;
+              }
+
+          CEikAppUi* CImlacDocument::CreateAppUiL()
+              {
+              return new (ELeave) CImlacAppUi;
+              }
+
+          LOCAL_C CApaApplication* NewApplication()
+              {
+              return new CImlacApplication;
+              }
+
+          GLDEF_C TInt E32Main()
+              {
+              return EikStart::RunApplication(NewApplication);
+              }
+          IMLAC_EOF
+          mkdir -p src/symbian
+          cat > src/symbian/imlac_appui.cpp <<'IMLAC_EOF'
+          // AppUi: owns the full-screen container (landscape, no status pane, no softkeys).
+          #include <avkon.hrh>
+          #include <eikon.hrh>
+          #include <eikenv.h>
+          #include <eikspane.h>
+          #include <eikbtgpc.h>
+          #include "imlac.h"
+
+          void CImlacAppUi::ConstructL()
+              {
+              BaseConstructL(CAknAppUi::EAknEnableSkin);
+              SetOrientationL(CAknAppUiBase::EAppUiOrientationLandscape);
+
+              CEikStatusPane* sp = StatusPane();
+              if (sp)
+                  {
+                  sp->MakeVisible(EFalse);
+                  }
+              CEikButtonGroupContainer* cba = Cba();
+              if (cba)
+                  {
+                  cba->MakeVisible(EFalse);
+                  }
+
+              iContainer = CImlacContainer::NewL(ApplicationRect());
+              AddToStackL(iContainer);
+              }
+
+          CImlacAppUi::~CImlacAppUi()
+              {
+              if (iContainer)
+                  {
+                  RemoveFromStack(iContainer);
+                  delete iContainer;
+                  iContainer = NULL;
+                  }
+              }
+
+          void CImlacAppUi::HandleCommandL(TInt aCommand)
+              {
+              switch (aCommand)
+                  {
+                  case EEikCmdExit:
+                  case EAknSoftkeyExit:
+                  case EAknCmdExit:
+                      Exit();
+                      break;
+                  default:
+                      break;
+                  }
+              }
+
+          void CImlacAppUi::HandleForegroundEventL(TBool aForeground)
+              {
+              CAknAppUi::HandleForegroundEventL(aForeground);
+              if (iContainer)
+                  {
+                  iContainer->SetForeground(aForeground);
+                  }
+              }
+
+          void CImlacAppUi::HandleResourceChangeL(TInt aType)
+              {
+              CAknAppUi::HandleResourceChangeL(aType);
+              if (iContainer && aType == KEikDynamicLayoutVariantSwitch)
+                  {
+                  iContainer->SetRect(ApplicationRect());
+                  }
+              }
+          IMLAC_EOF
+          mkdir -p src/symbian
+          cat > src/symbian/imlac_container.cpp <<'IMLAC_EOF'
+          // Main control: CRT view, touch controls, overlay menu, LAN status/chat.
+          #include <aknutils.h>
+          #include <aknquerydialog.h>
+          #include <avkon.hrh>
+          #include <eikon.hrh>
+          #include <eikenv.h>
+          #include <e32math.h>
+          #include <w32std.h>
+          #include <imlacpds1.rsg>
+
+          #include "imlac.h"
+          #include "Platform.h"
+          #include "Rand.h"
+
+          static const TInt KCrtW = 320;              // internal phosphor bitmap (square)
+          static const TInt KCrtH = 320;
+          static const TInt KFrameMicros = 33333;     // ~30 fps, same target as the iOS version
+          static const TInt KMenuW = 300;
+          static const TInt KMenuRowH = 34;
+
+          // ---------------------------------------------------------------------------
+          // Overlay menu (pages of command rows)
+          // ---------------------------------------------------------------------------
+          enum TCmd
+              {
+              ECmdClose = 1, ECmdPageMain, ECmdPageMachine, ECmdPageDemos, ECmdPageGame, ECmdExit,
+              ECmdPower, ECmdReset, ECmdRun, ECmdHalt, ECmdStep,
+              ECmdStar, ECmdScope, ECmdLiss, ECmdText, ECmdBounce, ECmdMaze, ECmdSpacewar, ECmdLines,
+              ECmdSingle, ECmdHost, ECmdJoin, ECmdDisc, ECmdChat
+              };
+
+          struct TMenuItem { const char* iLabel; TInt iCmd; };
+
+          static const TMenuItem kPageMain[] =
+              {
+              { "Resume", ECmdClose }, { "Machine >", ECmdPageMachine }, { "Demos >", ECmdPageDemos },
+              { "Maze War >", ECmdPageGame }, { "Exit", ECmdExit }
+              };
+          static const TMenuItem kPageMachine[] =
+              {
+              { "< Back", ECmdPageMain }, { "Power on", ECmdPower }, { "Reset", ECmdReset },
+              { "Run", ECmdRun }, { "Halt", ECmdHalt }, { "Step", ECmdStep }
+              };
+          static const TMenuItem kPageDemos[] =
+              {
+              { "< Back", ECmdPageMain }, { "Star", ECmdStar }, { "Scope", ECmdScope }, { "Lissajous", ECmdLiss },
+              { "Text", ECmdText }, { "Bounce", ECmdBounce }, { "Maze", ECmdMaze }, { "Spacewar", ECmdSpacewar },
+              { "Lines", ECmdLines }
+              };
+          static const TMenuItem kPageGame[] =
+              {
+              { "< Back", ECmdPageMain }, { "Single player", ECmdSingle }, { "Host (LAN)", ECmdHost },
+              { "Join (LAN)", ECmdJoin }, { "Disconnect", ECmdDisc }, { "Send chat", ECmdChat }
+              };
+
+          struct TMenuPage { const TMenuItem* iItems; TInt iCount; };
+          static const TMenuPage kPages[4] =
+              {
+              { kPageMain, 5 }, { kPageMachine, 6 }, { kPageDemos, 9 }, { kPageGame, 6 }
+              };
+
+          static void ToDes(TDes& aDst, const char* aSrc)
+              {
+              TPtrC8 p((const TUint8*)aSrc);
+              aDst.Copy(p.Left(aDst.MaxLength()));
+              }
+
+          // ---------------------------------------------------------------------------
+          // Construction
+          // ---------------------------------------------------------------------------
+          CImlacContainer* CImlacContainer::NewL(const TRect& aRect)
+              {
+              CImlacContainer* self = new (ELeave) CImlacContainer;
+              CleanupStack::PushL(self);
+              self->ConstructL(aRect);
+              CleanupStack::Pop(self);
+              return self;
+              }
+
+          CImlacContainer::CImlacContainer()
+              : iDemos(iMachine)
+              {
+              }
+
+          CImlacContainer::~CImlacContainer()
+              {
+              StopTimer();
+              delete iTimer;
+              iNet.stop();
+              delete iFrame;
+              }
+
+          void CImlacContainer::ConstructL(const TRect& aRect)
+              {
+              CreateWindowL();
+              SetExtentToWholeScreen();
+              EnableDragEvents();
+              SetFocusing(ETrue);
+
+              iFrame = new (ELeave) CFbsBitmap;
+              User::LeaveIfError(iFrame->Create(TSize(KCrtW, KCrtH), EColor16MU));
+              iFrame->LockHeap();
+              CrtRenderer::clear((TUint32*)iFrame->DataAddress(), KCrtW, KCrtH, iFrame->DataStride() / 4);
+              iFrame->UnlockHeap();
+
+              iTimer = CPeriodic::NewL(CActive::EPriorityStandard);
+
+              RandSeed(Math::Random());
+              iDemos.setDemo(DemoTypeStar);
+              iForeground = ETrue;
+              iMenu = EFalse;
+              iMenuPage = 0;
+              iMenuSel = 0;
+              iHeld = -1;
+              str_set(iNetStatus, sizeof(iNetStatus), "OFFLINE");
+              iFpsStart = User::NTickCount();
+
+              SetRect(aRect);
+              ActivateL();
+              StartTimer();
+              }
+
+          void CImlacContainer::StartTimer()
+              {
+              if (iTimer && !iTimer->IsActive())
+                  {
+                  iTimer->Start(KFrameMicros, KFrameMicros, TCallBack(TickCb, this));
+                  }
+              }
+
+          void CImlacContainer::StopTimer()
+              {
+              if (iTimer)
+                  {
+                  iTimer->Cancel();
+                  }
+              }
+
+          void CImlacContainer::SetForeground(TBool aForeground)
+              {
+              iForeground = aForeground;
+              if (aForeground)
+                  {
+                  StartTimer();
+                  }
+              else
+                  {
+                  StopTimer();
+                  if (iHeld >= 0)
+                      {
+                      PressButton(iHeld, EFalse);
+                      iHeld = -1;
+                      }
+                  }
+              }
+
+          // ---------------------------------------------------------------------------
+          // Frame tick: network, CPU/DP, demo, phosphor render, blit
+          // ---------------------------------------------------------------------------
+          TInt CImlacContainer::TickCb(TAny* aPtr)
+              {
+              static_cast<CImlacContainer*>(aPtr)->Tick();
+              return 0;
+              }
+
+          void CImlacContainer::Tick()
+              {
+              if (!iForeground)
+                  {
+                  return;
+                  }
+              User::ResetInactivityTime();       // keep the backlight on while playing
+
+              if (iNet.isActive())
+                  {
+                  iNet.poll();
+                  }
+
+              iMachine.dlClear();
+              if (iMachine.mp_run)
+                  {
+                  // the iOS build ran 200 MP + 50 DP steps per millisecond on a worker thread
+                  for (TInt i = 0; i < 25; ++i)
+                      {
+                      for (TInt j = 0; j < 200; ++j) iMachine.mpStep();
+                      for (TInt j = 0; j < 50; ++j) iMachine.dpStep();
+                      }
+                  }
+              iDemos.runCurrentDemo();
+
+              iFrame->LockHeap();
+              CrtRenderer::render((TUint32*)iFrame->DataAddress(), KCrtW, KCrtH, iFrame->DataStride() / 4, iMachine);
+              iFrame->UnlockHeap();
+
+              ++iFpsCount;
+              TUint now = User::NTickCount();
+              if (now - iFpsStart >= 1000)
+                  {
+                  iFps = iFpsCount;
+                  iFpsCount = 0;
+                  iFpsStart = now;
+                  }
+              DrawNow();
+              }
+
+          // ---------------------------------------------------------------------------
+          // Layout
+          // ---------------------------------------------------------------------------
+          void CImlacContainer::SizeChanged()
+              {
+              ComputeLayout();
+              }
+
+          void CImlacContainer::ComputeLayout()
+              {
+              TRect r = Rect();
+              TInt w = r.Width(), h = r.Height();
+              TInt side = Min(h, w - 240);
+              if (side < 120)
+                  {
+                  side = Min(h, w);
+                  }
+              TInt x0 = (w - side) / 2;
+              TInt y0 = (h - side) / 2;
+              iCrtRect = TRect(x0, y0, x0 + side, y0 + side);
+              iLeftPanel = TRect(0, 0, x0, h);
+              iRightPanel = TRect(x0 + side, 0, w, h);
+
+              // D-pad in the lower part of the left panel
+              TInt lw = iLeftPanel.Width();
+              TInt bs = Min(lw / 3, h / 4);
+              if (bs < 28) bs = 28;
+              TInt cx = lw / 2;
+              TInt cy = h - (bs * 3) / 2 - 6;
+              iBtn[0] = TRect(cx - bs / 2, cy - (bs * 3) / 2, cx + bs / 2, cy - bs / 2);       // up
+              iBtn[1] = TRect(cx - bs / 2, cy + bs / 2, cx + bs / 2, cy + (bs * 3) / 2);       // down
+              iBtn[2] = TRect(cx - (bs * 3) / 2, cy - bs / 2, cx - bs / 2, cy + bs / 2);       // left
+              iBtn[3] = TRect(cx + bs / 2, cy - bs / 2, cx + (bs * 3) / 2, cy + bs / 2);       // right
+
+              // Menu + fire buttons in the right panel
+              TInt rx0 = iRightPanel.iTl.iX + 8, rx1 = iRightPanel.iBr.iX - 8;
+              iBtnMenu = TRect(rx0, 6, rx1, 46);
+              TInt fh = Min(64, h / 5);
+              iBtn[5] = TRect(rx0, h - fh - 8, rx1, h - 8);                  // A
+              iBtn[4] = TRect(rx0, h - 2 * fh - 16, rx1, h - fh - 16);       // B
+              }
+
+          // ---------------------------------------------------------------------------
+          // Drawing
+          // ---------------------------------------------------------------------------
+          void CImlacContainer::DrawStr(CWindowGc& aGc, const char* aText, TInt aX, TInt aBaseline) const
+              {
+              TBuf<48> t;
+              ToDes(t, aText);
+              aGc.DrawText(t, TPoint(aX, aBaseline));
+              }
+
+          void CImlacContainer::DrawButton(CWindowGc& aGc, const TRect& aRect, const TDesC& aLabel, TBool aDown) const
+              {
+              aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+              aGc.SetPenColor(TRgb(0, 150, 60));
+              if (aDown)
+                  {
+                  aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+                  aGc.SetBrushColor(TRgb(0, 90, 40));
+                  }
+              else
+                  {
+                  aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+                  }
+              aGc.DrawRect(aRect);
+              aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+              const CFont* font = iEikonEnv->NormalFont();
+              aGc.UseFont(font);
+              aGc.SetPenColor(TRgb(120, 255, 150));
+              TInt base = (aRect.Height() + font->AscentInPixels() - font->DescentInPixels()) / 2;
+              aGc.DrawText(aLabel, aRect, base, CGraphicsContext::ECenter, 0);
+              aGc.DiscardFont();
+              }
+
+          TRect CImlacContainer::MenuBox() const
+              {
+              TRect r = Rect();
+              TInt h = kPages[iMenuPage].iCount * KMenuRowH;
+              return TRect((r.Width() - KMenuW) / 2, (r.Height() - h) / 2, (r.Width() + KMenuW) / 2, (r.Height() + h) / 2);
+              }
+
+          void CImlacContainer::DrawMenu(CWindowGc& aGc) const
+              {
+              TRect box = MenuBox();
+              aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+              aGc.SetPenColor(TRgb(0, 180, 70));
+              aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+              aGc.SetBrushColor(TRgb(4, 20, 8));
+              aGc.DrawRect(box);
+              const CFont* font = iEikonEnv->NormalFont();
+              aGc.UseFont(font);
+              const TMenuPage& page = kPages[iMenuPage];
+              for (TInt i = 0; i < page.iCount; ++i)
+                  {
+                  TRect row(box.iTl.iX, box.iTl.iY + i * KMenuRowH, box.iBr.iX, box.iTl.iY + (i + 1) * KMenuRowH);
+                  if (i == iMenuSel)
+                      {
+                      aGc.SetPenStyle(CGraphicsContext::ENullPen);
+                      aGc.SetBrushColor(TRgb(0, 80, 36));
+                      aGc.DrawRect(row);
+                      aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+                      }
+                  aGc.SetPenColor(TRgb(140, 255, 170));
+                  TBuf<32> label;
+                  ToDes(label, page.iItems[i].iLabel);
+                  TRect text(row.iTl.iX + 14, row.iTl.iY, row.iBr.iX, row.iBr.iY);
+                  aGc.DrawText(label, text, KMenuRowH / 2 + font->AscentInPixels() / 2 - 2, CGraphicsContext::ELeft, 0);
+                  }
+              aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+              aGc.DiscardFont();
+              }
+
+          void CImlacContainer::Draw(const TRect& /*aRect*/) const
+              {
+              CWindowGc& gc = SystemGc();
+              gc.SetPenStyle(CGraphicsContext::ESolidPen);
+              gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+              gc.SetBrushColor(KRgbBlack);
+              gc.Clear(Rect());
+              gc.SetBrushStyle(CGraphicsContext::ENullBrush);
+
+              gc.DrawBitmap(iCrtRect, iFrame);
+
+              // status lines (left panel, top)
+              const CFont* small = iEikonEnv->AnnotationFont();
+              gc.UseFont(small);
+              gc.SetPenColor(TRgb(0, 200, 70));
+              char line[40];
+              TInt lh = small->HeightInPixels() + 3;
+              TInt y = lh;
+              line[0] = 0; str_cat_int(line, sizeof(line), iFps, 0); str_cat(line, sizeof(line), "/30 fps");
+              DrawStr(gc, line, 6, y); y += lh;
+              str_set(line, sizeof(line), "PC:"); str_cat_hex(line, sizeof(line), (unsigned)iMachine.mp_pc, 4);
+              str_cat(line, sizeof(line), " AC:"); str_cat_hex(line, sizeof(line), (unsigned)iMachine.mp_ac, 4);
+              DrawStr(gc, line, 6, y); y += lh;
+              str_set(line, sizeof(line), "IR:"); str_cat_hex(line, sizeof(line), (unsigned)iMachine.mp_ir, 4);
+              str_cat(line, sizeof(line), " L:"); str_cat_int(line, sizeof(line), iMachine.mp_link, 0);
+              DrawStr(gc, line, 6, y); y += lh;
+              gc.SetPenColor(iMachine.mp_run ? TRgb(0, 200, 70) : TRgb(200, 160, 0));
+              DrawStr(gc, iMachine.mp_run ? "MP RUN" : "MP HALT", 6, y);
+
+              // network status + chat (right panel, under the Menu button)
+              TInt ry = iBtnMenu.iBr.iY + lh + 2;
+              TInt rx = iRightPanel.iTl.iX + 8;
+              gc.SetPenColor(iNet.isConnected() ? TRgb(0, 255, 100) : TRgb(180, 90, 0));
+              DrawStr(gc, iNetStatus, rx, ry);
+              gc.SetPenColor(TRgb(0, 190, 70));
+              for (TInt i = 0; i < iChatCount; ++i)
+                  {
+                  ry += lh;
+                  DrawStr(gc, iChat[i], rx, ry);
+                  }
+              gc.DiscardFont();
+
+              // touch controls
+              static const char* const kLbl[6] = { "^", "v", "<", ">", "B", "A" };
+              for (TInt i = 0; i < 6; ++i)
+                  {
+                  TBuf<4> l;
+                  ToDes(l, kLbl[i]);
+                  DrawButton(gc, iBtn[i], l, iDown[i]);
+                  }
+              DrawButton(gc, iBtnMenu, _L("MENU"), iMenu);
+
+              if (iMenu)
+                  {
+                  DrawMenu(gc);
+                  }
+              }
+
+          // ---------------------------------------------------------------------------
+          // Input
+          // ---------------------------------------------------------------------------
+          TInt CImlacContainer::HitTest(const TPoint& aPt) const
+              {
+              for (TInt i = 0; i < 6; ++i)
+                  {
+                  if (iBtn[i].Contains(aPt))
+                      {
+                      return i;
+                      }
+                  }
+              return -1;
+              }
+
+          // tag: 0 up, 1 down, 2 left, 3 right, 4 B, 5 A  (same mapping as the iOS D-pad)
+          void CImlacContainer::PressButton(TInt aTag, TBool aDown)
+              {
+              if (aTag < 0 || aTag > 5)
+                  {
+                  return;
+                  }
+              iDown[aTag] = aDown;
+              MazeWarGame* g = iDemos.getMazeWarGame();
+              if (aDown)
+                  {
+                  switch (aTag)
+                      {
+                      case 0: iMachine.keyboard = 'W'; break;
+                      case 1: iMachine.keyboard = 'S'; break;
+                      case 2: iMachine.keyboard = 'A'; break;
+                      case 3: iMachine.keyboard = 'D'; break;
+                      default: iMachine.keyboard = 32; break;
+                      }
+                  if (g)
+                      {
+                      switch (aTag)
+                          {
+                          case 0: g->iUp = true; break;
+                          case 1: g->iDown = true; break;
+                          case 2: g->iLeft = true; break;
+                          case 3: g->iRight = true; break;
+                          default: g->iFire = true; break;
+                          }
+                      }
+                  }
+              else
+                  {
+                  iMachine.keyboard = 0;
+                  if (g)
+                      {
+                      switch (aTag)
+                          {
+                          case 0: g->iUp = false; break;
+                          case 1: g->iDown = false; break;
+                          case 2: g->iLeft = false; break;
+                          case 3: g->iRight = false; break;
+                          default: g->iFire = false; break;
+                          }
+                      }
+                  }
+              }
+
+          void CImlacContainer::HandlePointerEventL(const TPointerEvent& aEvent)
+              {
+              const TPoint pt = aEvent.iPosition;
+
+              if (iMenu)
+                  {
+                  if (aEvent.iType == TPointerEvent::EButton1Up)
+                      {
+                      TRect box = MenuBox();
+                      if (box.Contains(pt))
+                          {
+                          MenuActivate((pt.iY - box.iTl.iY) / KMenuRowH);
+                          }
+                      else
+                          {
+                          CloseMenu();
+                          }
+                      }
+                  return;
+                  }
+
+              switch (aEvent.iType)
+                  {
+                  case TPointerEvent::EButton1Down:
+                      if (iBtnMenu.Contains(pt))
+                          {
+                          OpenMenu();
+                          return;
+                          }
+                      // fall through to the common press/drag handling
+                  case TPointerEvent::EDrag:
+                      {
+                      TInt idx = HitTest(pt);
+                      if (idx != iHeld)
+                          {
+                          if (iHeld >= 0)
+                              {
+                              PressButton(iHeld, EFalse);
+                              }
+                          iHeld = idx;
+                          if (idx >= 0)
+                              {
+                              PressButton(idx, ETrue);
+                              }
+                          DrawNow();
+                          }
+                      break;
+                      }
+                  case TPointerEvent::EButton1Up:
+                      if (iHeld >= 0)
+                          {
+                          PressButton(iHeld, EFalse);
+                          iHeld = -1;
+                          DrawNow();
+                          }
+                      break;
+                  default:
+                      break;
+                  }
+              }
+
+          TKeyResponse CImlacContainer::OfferKeyEventL(const TKeyEvent& aKey, TEventCode aType)
+              {
+              const TInt sc = aKey.iScanCode;
+
+              if (iMenu)
+                  {
+                  if (aType == EEventKeyDown)
+                      {
+                      const TMenuPage& page = kPages[iMenuPage];
+                      if (sc == EStdKeyUpArrow && iMenuSel > 0) --iMenuSel;
+                      else if (sc == EStdKeyDownArrow && iMenuSel < page.iCount - 1) ++iMenuSel;
+                      else if (sc == EStdKeyEnter || sc == EStdKeyDevice3) { MenuActivate(iMenuSel); return EKeyWasConsumed; }
+                      else if (sc == EStdKeyDevice0 || sc == EStdKeyDevice1) { CloseMenu(); return EKeyWasConsumed; }
+                      DrawNow();
+                      }
+                  return EKeyWasConsumed;
+                  }
+
+              if (sc == EStdKeyDevice0 || sc == 'M')
+                  {
+                  if (aType == EEventKeyDown)
+                      {
+                      OpenMenu();
+                      }
+                  return EKeyWasConsumed;
+                  }
+
+              TInt tag = -1;
+              switch (sc)
+                  {
+                  case EStdKeyUpArrow:    case 'W': tag = 0; break;
+                  case EStdKeyDownArrow:  case 'S': tag = 1; break;
+                  case EStdKeyLeftArrow:  case 'A': tag = 2; break;
+                  case EStdKeyRightArrow: case 'D': tag = 3; break;
+                  case EStdKeyDevice3:    case EStdKeySpace: case 'F': tag = 4; break;
+                  default: break;
+                  }
+              if (tag >= 0)
+                  {
+                  if (aType == EEventKeyDown)
+                      {
+                      PressButton(tag, ETrue);
+                      }
+                  else if (aType == EEventKeyUp)
+                      {
+                      PressButton(tag, EFalse);
+                      }
+                  return EKeyWasConsumed;
+                  }
+
+              // any other key goes to the Imlac keyboard register
+              TInt code = 0;
+              if ((sc >= '0' && sc <= '9') || (sc >= 'A' && sc <= 'Z')) code = sc;
+              else if (sc == EStdKeyEnter) code = 13;
+              else if (sc == EStdKeyBackspace) code = 8;
+              else if (sc == EStdKeyEscape) code = 27;
+              if (code)
+                  {
+                  if (aType == EEventKeyDown)
+                      {
+                      iMachine.keyboard = code;
+                      }
+                  else if (aType == EEventKeyUp && iMachine.keyboard == code)
+                      {
+                      iMachine.keyboard = 0;
+                      }
+                  return EKeyWasConsumed;
+                  }
+              return EKeyWasNotConsumed;
+              }
+
+          // ---------------------------------------------------------------------------
+          // Menu
+          // ---------------------------------------------------------------------------
+          void CImlacContainer::OpenMenu()
+              {
+              if (iHeld >= 0)
+                  {
+                  PressButton(iHeld, EFalse);
+                  iHeld = -1;
+                  }
+              iMenu = ETrue;
+              iMenuPage = 0;
+              iMenuSel = 0;
+              DrawNow();
+              }
+
+          void CImlacContainer::CloseMenu()
+              {
+              iMenu = EFalse;
+              DrawNow();
+              }
+
+          void CImlacContainer::MenuActivate(TInt aIndex)
+              {
+              const TMenuPage& page = kPages[iMenuPage];
+              if (aIndex < 0 || aIndex >= page.iCount)
+                  {
+                  return;
+                  }
+              iMenuSel = aIndex;
+              TRAPD(err, ExecCommandL(page.iItems[aIndex].iCmd));
+              (void)err;
+              }
+
+          void CImlacContainer::ExecCommandL(TInt aCmd)
+              {
+              switch (aCmd)
+                  {
+                  case ECmdClose: CloseMenu(); return;
+                  case ECmdPageMain:    iMenuPage = 0; iMenuSel = 0; DrawNow(); return;
+                  case ECmdPageMachine: iMenuPage = 1; iMenuSel = 0; DrawNow(); return;
+                  case ECmdPageDemos:   iMenuPage = 2; iMenuSel = 0; DrawNow(); return;
+                  case ECmdPageGame:    iMenuPage = 3; iMenuSel = 0; DrawNow(); return;
+                  case ECmdExit:
+                      iEikonEnv->EikAppUi()->HandleCommandL(EEikCmdExit);
+                      return;
+
+                  case ECmdPower: iMachine.powerOn(); break;
+                  case ECmdReset: iMachine.reset(); break;
+                  case ECmdRun:   iMachine.mp_halt = false; iMachine.mp_run = true; break;
+                  case ECmdHalt:  iMachine.mp_halt = true;  iMachine.mp_run = false; break;
+                  case ECmdStep:  iMachine.mpStep(); break;
+
+                  case ECmdStar:     iDemos.setDemo(DemoTypeStar); break;
+                  case ECmdScope:    iDemos.setDemo(DemoTypeScope); break;
+                  case ECmdLiss:     iDemos.setDemo(DemoTypeLissajous); break;
+                  case ECmdText:     iDemos.setDemo(DemoTypeText); break;
+                  case ECmdBounce:   iDemos.setDemo(DemoTypeBounce); break;
+                  case ECmdMaze:     iDemos.setDemo(DemoTypeMaze); break;
+                  case ECmdSpacewar: iDemos.setDemo(DemoTypeSpacewar); break;
+                  case ECmdLines:    iDemos.setDemo(DemoTypeLines); break;
+
+                  case ECmdSingle: StartMazeWar(); break;
+                  case ECmdHost:   HostGame(); break;
+                  case ECmdJoin:   JoinGame(); break;
+                  case ECmdDisc:   Disconnect(); break;
+                  case ECmdChat:
+                      CloseMenu();
+                      AskChatL();
+                      return;
+                  default: break;
+                  }
+              CloseMenu();
+              }
+
+          // ---------------------------------------------------------------------------
+          // Maze War / LAN
+          // ---------------------------------------------------------------------------
+          void CImlacContainer::StartMazeWar()
+              {
+              iNet.stop();
+              SetNetStatus("OFFLINE");
+              iDemos.initMazeWar();
+              MazeWarGame* g = iDemos.getMazeWarGame();
+              g->stopNet();
+              iDemos.setDemo(DemoTypeMazeWar);
+              g->startSinglePlayer();
+              }
+
+          void CImlacContainer::HostGame()
+              {
+              iNet.stop();
+              iDemos.initMazeWar();
+              MazeWarGame* g = iDemos.getMazeWarGame();
+              iNet.setListeners(g, this);
+              g->hostMulti(&iNet);
+              iDemos.setDemo(DemoTypeMazeWar);
+              SetNetStatus("HOSTING - waiting");
+              AddChat("SYS: hosting :7474");
+              int seed = (int)(RandU32() & 0x7FFFFFFFu);
+              if (seed == 0) seed = 1;
+              iNet.host(seed);            // may pop up the access point selection
+              }
+
+          void CImlacContainer::JoinGame()
+              {
+              iNet.stop();
+              iDemos.initMazeWar();
+              MazeWarGame* g = iDemos.getMazeWarGame();
+              iNet.setListeners(g, this);
+              g->joinMulti(&iNet);
+              iDemos.setDemo(DemoTypeMazeWar);
+              SetNetStatus("SEARCHING for host");
+              AddChat("SYS: searching...");
+              iNet.discover();
+              }
+
+          void CImlacContainer::Disconnect()
+              {
+              iNet.stop();
+              MazeWarGame* g = iDemos.getMazeWarGame();
+              if (g)
+                  {
+                  g->stopNet();
+                  }
+              SetNetStatus("OFFLINE");
+              AddChat("SYS: disconnected");
+              }
+
+          void CImlacContainer::AskChatL()
+              {
+              if (!iNet.isConnected())
+                  {
+                  AddChat("SYS: not connected");
+                  DrawNow();
+                  return;
+                  }
+              TBuf<16> text;
+              CAknTextQueryDialog* dlg = CAknTextQueryDialog::NewL(text);
+              if (dlg->ExecuteLD(R_IMLAC_CHAT_QUERY) && text.Length() > 0)
+                  {
+                  TBuf8<16> t8;
+                  t8.Copy(text);
+                  char buf[16];
+                  TInt n = t8.Length();
+                  for (TInt i = 0; i < n; ++i) buf[i] = (char)t8[i];
+                  buf[n] = 0;
+                  iNet.sendChat(buf);
+                  }
+              DrawNow();
+              }
+
+          void CImlacContainer::AddChat(const char* aLine)
+              {
+              if (iChatCount == 4)
+                  {
+                  for (TInt i = 1; i < 4; ++i)
+                      {
+                      str_set(iChat[i - 1], sizeof(iChat[0]), iChat[i]);
+                      }
+                  --iChatCount;
+                  }
+              str_set(iChat[iChatCount], sizeof(iChat[0]), aLine);
+              ++iChatCount;
+              }
+
+          void CImlacContainer::SetNetStatus(const char* aText)
+              {
+              str_set(iNetStatus, sizeof(iNetStatus), aText);
+              }
+
+          // MNetListener (UI side: status line and chat; the game logic has its own listener)
+          void CImlacContainer::onConnected(bool aAsHost, int /*aSeed*/)
+              {
+              SetNetStatus(aAsHost ? "HOST connected" : "GUEST connected");
+              AddChat(aAsHost ? "SYS: you=HOST" : "SYS: you=GUEST");
+              }
+
+          void CImlacContainer::onPeerMazeState(int, int, int, int, int) {}
+          void CImlacContainer::onPeerSync(int, int) {}
+          void CImlacContainer::onPeerBullet(int) {}
+          void CImlacContainer::onPeerKilled() {}
+
+          void CImlacContainer::onDisconnected()
+              {
+              SetNetStatus("DISCONNECTED");
+              AddChat("SYS: peer lost");
+              }
+
+          void CImlacContainer::onChat(const char* aFrom, const char* aMsg)
+              {
+              char buf[24];
+              str_set(buf, sizeof(buf), aFrom);
+              str_cat(buf, sizeof(buf), ": ");
+              str_cat(buf, sizeof(buf), aMsg);
+              AddChat(buf);
+              }
+          IMLAC_EOF
+          mkdir -p host_test/stubs
+          cat > host_test/stubs/symbian_stub.h <<'IMLAC_EOF'
+          // symbian_stub.h - NOT part of the Symbian build.
+          // A minimal imitation of the Symbian/Avkon API surface used by src/symbian/*.cpp, so the front end can be
+          // syntax/type-checked with host g++ (-fsyntax-only). Signatures follow the real SDK headers; it cannot
+          // prove the code links or behaves on a device.
+          #ifndef SYMBIAN_STUB_H
+          #define SYMBIAN_STUB_H
+          #include <stddef.h>
+          #include <stdlib.h>
+
+          typedef int TInt; typedef unsigned int TUint; typedef unsigned int TUint32; typedef unsigned char TUint8;
+          typedef int TBool; typedef int TInt32; typedef short TInt16; typedef unsigned short TText;
+          enum { EFalse = 0, ETrue = 1 };
+          enum TLeave { ELeave };
+          enum { KErrNone = 0 };
+          template <class T> inline T Min(T a, T b) { return a < b ? a : b; }
+          template <class T> inline T Max(T a, T b) { return a > b ? a : b; }
+
+          typedef void TAny;
+
+          struct TPoint { TInt iX, iY; TPoint() : iX(0), iY(0) {} TPoint(TInt x, TInt y) : iX(x), iY(y) {} };
+          struct TSize { TInt iWidth, iHeight; TSize(TInt w, TInt h) : iWidth(w), iHeight(h) {} };
+          struct TRect {
+              TPoint iTl, iBr;
+              TRect() {}
+              TRect(TInt a, TInt b, TInt c, TInt d) : iTl(a, b), iBr(c, d) {}
+              TRect(const TPoint& a, const TPoint& b) : iTl(a), iBr(b) {}
+              TInt Width() const { return iBr.iX - iTl.iX; }
+              TInt Height() const { return iBr.iY - iTl.iY; }
+              TBool Contains(const TPoint& p) const { return p.iX >= iTl.iX && p.iX < iBr.iX && p.iY >= iTl.iY && p.iY < iBr.iY; }
+          };
+          struct TRgb { TRgb(TInt, TInt, TInt) {} TRgb(TUint32) {} };
+          static const TRgb KRgbBlack(0);
+
+          // ---- descriptors ----
+          class TDesC8 { public: virtual ~TDesC8() {} TInt Length() const { return iLen; } const TUint8* Ptr() const { return iPtr; }
+              TUint8 operator[](TInt i) const { return iPtr[i]; } TInt iLen; const TUint8* iPtr; };
+          class TPtrC8 : public TDesC8 { public: TPtrC8(const TUint8* z) { iPtr = z; iLen = 0; while (z[iLen]) iLen++; }
+              TPtrC8 Left(TInt n) const { TPtrC8 r(*this); if (n < r.iLen) r.iLen = n; return r; } };
+          class TDesC { public: virtual ~TDesC() {} TInt Length() const { return iLen; } TText* iPtr; TInt iLen; TInt iMax; };
+          class TDes : public TDesC { public: TInt MaxLength() const { return iMax; } void Copy(const TDesC8& a) { iLen = Min(a.Length(), iMax); for (TInt i = 0; i < iLen; i++) iPtr[i] = a.Ptr()[i]; } };
+          template <TInt N> class TBuf : public TDes { TText buf[N]; public: TBuf() { iPtr = buf; iLen = 0; iMax = N; } };
+          class TDes8 : public TDesC8 { public: TInt iMax; };
+          template <TInt N> class TBuf8 : public TDes8 { TUint8 buf[N]; public: TBuf8() { iPtr = buf; iLen = 0; iMax = N; }
+              void Copy(const TDesC& a) { iLen = Min(a.Length(), N); for (TInt i = 0; i < iLen; i++) buf[i] = (TUint8)a.iPtr[i]; } };
+          class TLitC { public: operator const TDesC&() const { static TBuf<1> b; return b; } };
+          #define _L(x) (TLitC())
+
+          // ---- base classes / active objects ----
+          class CBase { public: virtual ~CBase() {} void* operator new(size_t s, TLeave) { return calloc(1, s); }
+              void* operator new(size_t s) { return calloc(1, s); } void operator delete(void* p) { free(p); } };
+          class CActive { public: enum TPriority { EPriorityStandard = 0 }; TBool IsActive() const { return 0; } void Cancel() {} };
+          struct TCallBack { TInt (*iFn)(void*); void* iPtr; TCallBack(TInt (*f)(void*), void* p) : iFn(f), iPtr(p) {} };
+          class CPeriodic : public CActive { public: static CPeriodic* NewL(TInt) { return new (ELeave) CPeriodic; }
+              void* operator new(size_t s, TLeave) { return calloc(1, s); } void Start(TInt, TInt, TCallBack) {} };
+          class CleanupStack { public: static void PushL(CBase*) {} static void Pop(CBase*) {} };
+          namespace User { inline void LeaveIfError(TInt) {} inline void ResetInactivityTime() {} inline TUint NTickCount() { return 0; } }
+          namespace Math { inline TUint32 Random() { return 1; } }
+          #define TRAPD(e, s) TInt e = 0; s
+          #define LOCAL_C static
+          #define GLDEF_C
+
+          // ---- graphics ----
+          class CFont { public: TInt AscentInPixels() const { return 10; } TInt DescentInPixels() const { return 3; } TInt HeightInPixels() const { return 13; } };
+          class CFbsBitmap : public CBase { public: TInt Create(const TSize&, TInt) { return 0; } void LockHeap() {} void UnlockHeap() {}
+              TInt* DataAddress() const { return 0; } TInt DataStride() const { return 0; } };
+          enum { EColor16MU = 1 };
+          class CGraphicsContext { public: enum TPenStyle { ENullPen, ESolidPen }; enum TBrushStyle { ENullBrush, ESolidBrush };
+              enum TTextAlign { ELeft, ECenter, ERight }; };
+          class CWindowGc : public CGraphicsContext { public:
+              void SetPenStyle(TPenStyle) {} void SetBrushStyle(TBrushStyle) {} void SetPenColor(const TRgb&) {} void SetBrushColor(const TRgb&) {}
+              void DrawRect(const TRect&) {} void Clear(const TRect&) {} void DrawBitmap(const TRect&, const CFbsBitmap*) {}
+              void UseFont(const CFont*) {} void DiscardFont() {}
+              void DrawText(const TDesC&, const TPoint&) {} void DrawText(const TDesC&, const TRect&, TInt, TTextAlign, TInt) {} };
+
+          // ---- UI framework ----
+          struct TPointerEvent { enum TType { EButton1Down, EButton1Up, EDrag, EMove }; TType iType; TPoint iPosition; };
+          struct TKeyEvent { TInt iCode; TInt iScanCode; TUint iModifiers; TInt iRepeats; };
+          enum TEventCode { EEventNull, EEventKey, EEventKeyUp, EEventKeyDown };
+          enum TKeyResponse { EKeyWasNotConsumed, EKeyWasConsumed };
+          enum TStdScanCode { EStdKeyBackspace = 1, EStdKeyEnter = 3, EStdKeyEscape = 4, EStdKeySpace = 0x20, EStdKeyLeftArrow = 14,
+              EStdKeyRightArrow = 15, EStdKeyUpArrow = 16, EStdKeyDownArrow = 17, EStdKeyDevice0 = 0xA4, EStdKeyDevice1 = 0xA5, EStdKeyDevice3 = 0xA7 };
+          enum { EEikCmdExit = 0x1000, EAknSoftkeyExit = 0x1001, EAknCmdExit = 0x1002, KEikDynamicLayoutVariantSwitch = 0x1003 };
+
+          class CEikAppUi; class CEikApplication;
+          class CEikonEnv { public: static CEikonEnv* Static() { return 0; } const CFont* NormalFont() const { return 0; }
+              const CFont* AnnotationFont() const { return 0; } CEikAppUi* EikAppUi() const { return 0; } };
+
+          class CCoeControl : public CBase { public:
+              virtual void Draw(const TRect&) const {} virtual void SizeChanged() {} virtual void HandlePointerEventL(const TPointerEvent&) {}
+              virtual TKeyResponse OfferKeyEventL(const TKeyEvent&, TEventCode) { return EKeyWasNotConsumed; }
+              void CreateWindowL() {} void SetExtentToWholeScreen() {} void EnableDragEvents() {} void SetRect(const TRect&) { SizeChanged(); }
+              void ActivateL() {} void DrawNow() const {} TRect Rect() const { return TRect(0, 0, 640, 360); }
+              void SetMopParent(void*) {}
+          protected:
+              CWindowGc& SystemGc() const { static CWindowGc g; return g; }
+              void SetFocusing(TBool) {}
+              CEikonEnv* iEikonEnv;
+          };
+
+          class CApaDocument : public CBase {}; class CApaApplication : public CBase {};
+          class CEikApplication : public CApaApplication {};
+          class CEikAppUi : public CBase { public: virtual void HandleCommandL(TInt) {} };
+          class CEikStatusPane { public: void MakeVisible(TBool) {} };
+          class CEikButtonGroupContainer { public: void MakeVisible(TBool) {} };
+          class CAknAppUiBase : public CEikAppUi { public: enum TAppUiOrientation { EAppUiOrientationLandscape };
+              void SetOrientationL(TAppUiOrientation) {} };
+          class CAknAppUi : public CAknAppUiBase { public: enum { EAknEnableSkin = 1 };
+              void BaseConstructL(TInt) {} CEikStatusPane* StatusPane() const { return 0; } CEikButtonGroupContainer* Cba() const { return 0; }
+              TRect ApplicationRect() const { return TRect(0, 0, 640, 360); } void AddToStackL(CCoeControl*) {} void RemoveFromStack(CCoeControl*) {}
+              void Exit() {} virtual void HandleForegroundEventL(TBool) {} virtual void HandleResourceChangeL(TInt) {} };
+          class CEikDocument : public CApaDocument { public: CEikDocument(CEikApplication&) {} virtual CEikAppUi* CreateAppUiL() = 0; };
+          class CAknDocument : public CEikDocument { public: CAknDocument(CEikApplication& a) : CEikDocument(a) {} };
+          struct TUid { TInt iUid; };
+          class CAknApplication : public CEikApplication { public: virtual CApaDocument* CreateDocumentL() = 0; virtual TUid AppDllUid() const = 0; };
+          class CAknTextQueryDialog { public: static CAknTextQueryDialog* NewL(TDes&) { return new CAknTextQueryDialog; } TInt ExecuteLD(TInt) { return 1; } };
+          namespace EikStart { inline TInt RunApplication(CApaApplication* (*)()) { return 0; } }
+          enum { R_IMLAC_CHAT_QUERY = 1 };
+          #endif
+          IMLAC_EOF
+          for h in aknapp.h aknappui.h akndoc.h aknquerydialog.h aknutils.h avkon.hrh coecntrl.h e32base.h e32math.h e32std.h eikbtgpc.h eikenv.h eikon.hrh eikspane.h eikstart.h fbs.h imlacpds1.rsg w32std.h; do echo '#include "symbian_stub.h"' > host_test/stubs/$h; done
+          chmod +x host_test/run_tests.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: port-src
+          path: symbian
+
+  host-test:
+    name: Core tests (host)
+    needs: sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: port-src
+          path: symbian
+      - run: pip install pillow
+      - name: Run host checks (freestanding core, sanitizers, API-stub type check, preview)
+        run: bash symbian/host_test/run_tests.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: host-preview
+          path: symbian/host_test/out/preview.png
+
+  build-sis:
+    name: Build imlacpds1.sisx
+    needs: [sources, host-test]
+    runs-on: ${{ vars.MACOS_RUNNER || 'macos-latest' }}
+    timeout-minutes: 360
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: port-src
+          path: symbian
+
+      - name: Check out symbian3-toolchain
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TOOLCHAIN_REPO }}
+          ref: ${{ env.TOOLCHAIN_REF }}
+          path: toolchain
+
+      - name: Create case-sensitive APFS volume
+        run: |
+          hdiutil create -size 24g -fs "Case-sensitive APFS" -volname Symbian -type SPARSE "$RUNNER_TEMP/symbian"
+          hdiutil attach "$RUNNER_TEMP/symbian.sparseimage" -mountpoint "$SYMBIAN_VOL"
+          sudo chown "$(id -u):$(id -g)" "$SYMBIAN_VOL"
+
+      - name: Install Homebrew dependencies and Rosetta
+        run: |
+          brew install perl openssl@3 unshield make gmp mpfr libmpc isl gnu-sed
+          # install-sdk.sh requires perl to resolve to /opt/homebrew/opt/perl/bin/perl, not the linked
+          # /opt/homebrew/bin/perl symlink, so keep the keg unlinked (as on a stock Mac).
+          brew unlink perl
+          sudo softwareupdate --install-rosetta --agree-to-license || true
+
+      - name: Restore toolchain cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /Volumes/Symbian/toolchain
+            /Volumes/Symbian/sdks
+            /Volumes/Symbian/gnupoc
+          key: symbian3-toolchain-${{ env.TOOLCHAIN_REF }}-${{ env.GNUPOC_COMMIT }}-${{ env.GCC4SYMBIAN_COMMIT }}
+
+      - name: Build toolchain and install SDK (cache miss)
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          JOBS: 4
+        run: |
+          set -eo pipefail
+          cd toolchain
+          source Scripts/env.sh
+          mkdir -p "$N8_SRC"
+          git clone https://github.com/mstorsjo/gnupoc-package "$N8_SRC/gnupoc-package"
+          git -C "$N8_SRC/gnupoc-package" checkout "$GNUPOC_COMMIT"
+          git clone https://github.com/fedor4ever/GCC4Symbian "$N8_SRC/GCC4Symbian"
+          git -C "$N8_SRC/GCC4Symbian" checkout "$GCC4SYMBIAN_COMMIT"
+          Scripts/fetch-sdk.sh
+          Scripts/build-host-tools.sh
+          Scripts/build-gcc.sh
+          Scripts/install-sdk.sh
+
+      - name: Save toolchain cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /Volumes/Symbian/toolchain
+            /Volumes/Symbian/sdks
+            /Volumes/Symbian/gnupoc
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - name: Offline build (no sockets / no libc.lib)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.net == false }}
+        run: |
+          cd "symbian/group"
+          /usr/bin/sed -i '' '/^LIBRARY[[:space:]]*libc\.lib/d' imlacpds1.mmp
+          echo 'MACRO IMLAC_NO_NET' >> imlacpds1.mmp
+
+      - name: Show toolchain environment
+        run: |
+          source toolchain/Scripts/env.sh
+          env | grep -iE 'symbian|n8_|epoc|gnupoc' | sort || true
+          ls "$SYMBIAN_VOL" || true
+
+      - name: Build Imlac PDS-1
+        run: |
+          set -eo pipefail
+          source toolchain/Scripts/env.sh
+          cd "symbian/group"
+          bldmake bldfiles
+          abld build -keepgoing gcce urel 2>&1 | tee "$GITHUB_WORKSPACE/abld.log"
+
+      - name: Verify the executable was produced
+        run: |
+          set -eo pipefail
+          # abld -keepgoing can exit 0 even when a file failed to compile
+          grep -nE "(error:|Error [0-9]|undefined reference|No such file)" abld.log | head -50 || true
+          EXE="$(find "$SYMBIAN_VOL" -iname imlacpds1.exe -path '*urel*' 2>/dev/null | head -1)"
+          echo "exe: ${EXE:-<none>}"
+          test -n "$EXE"
+
+      - name: Package signed SIS
+        run: |
+          set -eo pipefail
+          source toolchain/Scripts/env.sh
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          "$N8_REPO/Scripts/package-sis.sh" "symbian/sis/imlacpds1.pkg" "$GITHUB_WORKSPACE/dist"
+          ls -l "$GITHUB_WORKSPACE/dist"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: imlacpds1-symbian3
+          path: dist/imlacpds1.sisx
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: abld-log
+          path: abld.log
+          if-no-files-found: ignore
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/imlacpds1.sisx
