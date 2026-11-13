@@ -2190,24 +2190,16 @@ jobs:
           #include <netinet/in.h>
           #include <arpa/inet.h>
           #include <unistd.h>
+          #include <fcntl.h>
 
           #define NET_PEER_TIMEOUT_FRAMES   150    // ~6 s at 25 fps
           #define NET_SEARCH_TIMEOUT_FRAMES 750    // ~30 s
           #define NET_BCAST_EVERY           8      // guest broadcasts every 8 frames
           #define NET_KEEPALIVE_EVERY       25
 
-          static bool readable(int fd) {
-              fd_set rs;
-              FD_ZERO(&rs);
-              FD_SET(fd, &rs);
-              struct timeval tv;
-              tv.tv_sec = 0; tv.tv_usec = 0;
-              return select(fd + 1, &rs, 0, 0, &tv) > 0;
-          }
-
           // Returns bytes received (0 when nothing is waiting or on error).
           static int recvPkt(int fd, u8* buf, struct sockaddr_in* src) {
-              if (fd < 0 || !readable(fd)) return 0;
+              if (fd < 0) return 0;               // socket is non-blocking: returns <= 0 when nothing is waiting
               socklen_t len = (socklen_t)sizeof(*src);
               mem_set(src, 0, sizeof(*src));
               int n = (int)recvfrom(fd, (char*)buf, NET_PKT, 0, (struct sockaddr*)src, &len);
@@ -2217,6 +2209,12 @@ jobs:
           static int makeUdpSocket(int port, bool broadcast) {
               int fd = (int)socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
               if (fd < 0) return -1;
+              // Never block the UI thread: non-blocking mode, plus a 1 ms receive timeout as a safety net in
+              // case the C library ignores O_NONBLOCK on sockets. (select() is not declared by the Open C headers.)
+              fcntl(fd, F_SETFL, O_NONBLOCK);
+              struct timeval rt;
+              rt.tv_sec = 0; rt.tv_usec = 1000;
+              setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&rt, sizeof(rt));
               int on = 1;
               setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&on, sizeof(on));
               if (broadcast) setsockopt(fd, SOL_SOCKET, SO_BROADCAST, (const char*)&on, sizeof(on));
@@ -3073,7 +3071,7 @@ jobs:
               iFrame = new (ELeave) CFbsBitmap;
               User::LeaveIfError(iFrame->Create(TSize(KCrtW, KCrtH), EColor16MU));
               iFrame->LockHeap();
-              CrtRenderer::clear((TUint32*)iFrame->DataAddress(), KCrtW, KCrtH, iFrame->DataStride() / 4);
+              CrtRenderer::clear((u32*)iFrame->DataAddress(), KCrtW, KCrtH, iFrame->DataStride() / 4);
               iFrame->UnlockHeap();
 
               iTimer = CPeriodic::NewL(CActive::EPriorityStandard);
@@ -3162,7 +3160,7 @@ jobs:
               iDemos.runCurrentDemo();
 
               iFrame->LockHeap();
-              CrtRenderer::render((TUint32*)iFrame->DataAddress(), KCrtW, KCrtH, iFrame->DataStride() / 4, iMachine);
+              CrtRenderer::render((u32*)iFrame->DataAddress(), KCrtW, KCrtH, iFrame->DataStride() / 4, iMachine);
               iFrame->UnlockHeap();
 
               ++iFpsCount;
@@ -3751,7 +3749,7 @@ jobs:
           #include <stddef.h>
           #include <stdlib.h>
 
-          typedef int TInt; typedef unsigned int TUint; typedef unsigned int TUint32; typedef unsigned char TUint8;
+          typedef int TInt; typedef unsigned int TUint; typedef unsigned long TUint32; typedef unsigned char TUint8;
           typedef int TBool; typedef int TInt32; typedef short TInt16; typedef unsigned short TText;
           enum { EFalse = 0, ETrue = 1 };
           enum TLeave { ELeave };
@@ -3806,7 +3804,7 @@ jobs:
           // ---- graphics ----
           class CFont { public: TInt AscentInPixels() const { return 10; } TInt DescentInPixels() const { return 3; } TInt HeightInPixels() const { return 13; } };
           class CFbsBitmap : public CBase { public: TInt Create(const TSize&, TInt) { return 0; } void LockHeap() {} void UnlockHeap() {}
-              TInt* DataAddress() const { return 0; } TInt DataStride() const { return 0; } };
+              TUint32* DataAddress() const { return 0; } TInt DataStride() const { return 0; } };
           enum { EColor16MU = 1 };
           class CGraphicsContext { public: enum TPenStyle { ENullPen, ESolidPen }; enum TBrushStyle { ENullBrush, ESolidBrush };
               enum TTextAlign { ELeft, ECenter, ERight }; };
@@ -3984,6 +3982,14 @@ jobs:
           EXE="$(find "$SYMBIAN_VOL" -iname imlacpds1.exe -path '*urel*' 2>/dev/null | head -1)"
           echo "exe: ${EXE:-<none>}"
           test -n "$EXE"
+
+      - name: Diagnostics (on failure)
+        if: failure()
+        run: |
+          E=/Volumes/Symbian/sdks/symbian3/epoc32
+          echo "--- stdapis/sys headers"; ls $E/include/stdapis/sys 2>&1 | head -80
+          echo "--- Open C import libs"; ls $E/release/armv5/lib 2>&1 | grep -iE "^(libc|libm|libpthread|esock|insock)" || true
+          echo "--- headers declaring fd_set"; grep -rl "fd_set" $E/include/stdapis 2>/dev/null | head || true
 
       - name: Package signed SIS
         run: |
