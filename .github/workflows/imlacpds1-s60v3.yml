@@ -3433,26 +3433,173 @@ jobs:
               { kPageMain, 5 }, { kPageMachine, 6 }, { kPageDemos, 9 }, { kPageGame, 6 }
               };
 
-          // Font lookups can return NULL (emulators, missing font files): fall back, never dereference NULL.
-          static const CFont* PickFont(const CFont* aPreferred)
+          // ---------------------------------------------------------------------------
+          // Built-in 5x7 bitmap font. System fonts are unreliable (the EKA2L1 default font is a 7-segment face
+          // with no letters, which showed up as empty boxes), so all text is drawn by the app itself.
+          // ---------------------------------------------------------------------------
+          static const unsigned char kFont5x7[95][5] =
               {
-              if (aPreferred)
-                  {
-                  return aPreferred;
-                  }
-              CEikonEnv* env = CEikonEnv::Static();
-              return env ? env->NormalFont() : NULL;
+              {0x00, 0x00, 0x00, 0x00, 0x00},
+              {0x00, 0x00, 0x5F, 0x00, 0x00},
+              {0x00, 0x07, 0x00, 0x07, 0x00},
+              {0x14, 0x7F, 0x14, 0x7F, 0x14},
+              {0x24, 0x2A, 0x7F, 0x2A, 0x12},
+              {0x23, 0x13, 0x08, 0x64, 0x62},
+              {0x36, 0x49, 0x56, 0x20, 0x50},
+              {0x00, 0x05, 0x03, 0x00, 0x00},
+              {0x00, 0x1C, 0x22, 0x41, 0x00},
+              {0x00, 0x41, 0x22, 0x1C, 0x00},
+              {0x2A, 0x1C, 0x7F, 0x1C, 0x2A},
+              {0x08, 0x08, 0x3E, 0x08, 0x08},
+              {0x00, 0x50, 0x30, 0x00, 0x00},
+              {0x08, 0x08, 0x08, 0x08, 0x08},
+              {0x00, 0x60, 0x60, 0x00, 0x00},
+              {0x20, 0x10, 0x08, 0x04, 0x02},
+              {0x3E, 0x51, 0x49, 0x45, 0x3E},
+              {0x00, 0x42, 0x7F, 0x40, 0x00},
+              {0x42, 0x61, 0x51, 0x49, 0x46},
+              {0x21, 0x41, 0x45, 0x4B, 0x31},
+              {0x18, 0x14, 0x12, 0x7F, 0x10},
+              {0x27, 0x45, 0x45, 0x45, 0x39},
+              {0x3C, 0x4A, 0x49, 0x49, 0x30},
+              {0x01, 0x71, 0x09, 0x05, 0x03},
+              {0x36, 0x49, 0x49, 0x49, 0x36},
+              {0x06, 0x49, 0x49, 0x29, 0x1E},
+              {0x00, 0x36, 0x36, 0x00, 0x00},
+              {0x00, 0x56, 0x36, 0x00, 0x00},
+              {0x08, 0x14, 0x22, 0x41, 0x00},
+              {0x14, 0x14, 0x14, 0x14, 0x14},
+              {0x00, 0x41, 0x22, 0x14, 0x08},
+              {0x02, 0x01, 0x51, 0x09, 0x06},
+              {0x32, 0x49, 0x79, 0x41, 0x3E},
+              {0x7E, 0x11, 0x11, 0x11, 0x7E},
+              {0x7F, 0x49, 0x49, 0x49, 0x36},
+              {0x3E, 0x41, 0x41, 0x41, 0x22},
+              {0x7F, 0x41, 0x41, 0x22, 0x1C},
+              {0x7F, 0x49, 0x49, 0x49, 0x41},
+              {0x7F, 0x09, 0x09, 0x09, 0x01},
+              {0x3E, 0x41, 0x49, 0x49, 0x7A},
+              {0x7F, 0x08, 0x08, 0x08, 0x7F},
+              {0x00, 0x41, 0x7F, 0x41, 0x00},
+              {0x20, 0x40, 0x41, 0x3F, 0x01},
+              {0x7F, 0x08, 0x14, 0x22, 0x41},
+              {0x7F, 0x40, 0x40, 0x40, 0x40},
+              {0x7F, 0x02, 0x0C, 0x02, 0x7F},
+              {0x7F, 0x04, 0x08, 0x10, 0x7F},
+              {0x3E, 0x41, 0x41, 0x41, 0x3E},
+              {0x7F, 0x09, 0x09, 0x09, 0x06},
+              {0x3E, 0x41, 0x51, 0x21, 0x5E},
+              {0x7F, 0x09, 0x19, 0x29, 0x46},
+              {0x46, 0x49, 0x49, 0x49, 0x31},
+              {0x01, 0x01, 0x7F, 0x01, 0x01},
+              {0x3F, 0x40, 0x40, 0x40, 0x3F},
+              {0x1F, 0x20, 0x40, 0x20, 0x1F},
+              {0x3F, 0x40, 0x38, 0x40, 0x3F},
+              {0x63, 0x14, 0x08, 0x14, 0x63},
+              {0x07, 0x08, 0x70, 0x08, 0x07},
+              {0x61, 0x51, 0x49, 0x45, 0x43},
+              {0x00, 0x7F, 0x41, 0x41, 0x00},
+              {0x02, 0x04, 0x08, 0x10, 0x20},
+              {0x00, 0x41, 0x41, 0x7F, 0x00},
+              {0x04, 0x02, 0x01, 0x02, 0x04},
+              {0x40, 0x40, 0x40, 0x40, 0x40},
+              {0x00, 0x01, 0x02, 0x04, 0x00},
+              {0x20, 0x54, 0x54, 0x54, 0x78},
+              {0x7F, 0x48, 0x44, 0x44, 0x38},
+              {0x38, 0x44, 0x44, 0x44, 0x20},
+              {0x38, 0x44, 0x44, 0x48, 0x7F},
+              {0x38, 0x54, 0x54, 0x54, 0x18},
+              {0x08, 0x7E, 0x09, 0x01, 0x02},
+              {0x08, 0x14, 0x54, 0x54, 0x3C},
+              {0x7F, 0x08, 0x04, 0x04, 0x78},
+              {0x00, 0x44, 0x7D, 0x40, 0x00},
+              {0x20, 0x40, 0x44, 0x3D, 0x00},
+              {0x7F, 0x10, 0x28, 0x44, 0x00},
+              {0x00, 0x41, 0x7F, 0x40, 0x00},
+              {0x7C, 0x04, 0x18, 0x04, 0x78},
+              {0x7C, 0x08, 0x04, 0x04, 0x78},
+              {0x38, 0x44, 0x44, 0x44, 0x38},
+              {0x7C, 0x14, 0x14, 0x14, 0x08},
+              {0x08, 0x14, 0x14, 0x18, 0x7C},
+              {0x7C, 0x08, 0x04, 0x04, 0x08},
+              {0x48, 0x54, 0x54, 0x54, 0x20},
+              {0x04, 0x3F, 0x44, 0x40, 0x20},
+              {0x3C, 0x40, 0x40, 0x20, 0x7C},
+              {0x1C, 0x20, 0x40, 0x20, 0x1C},
+              {0x3C, 0x40, 0x30, 0x40, 0x3C},
+              {0x44, 0x28, 0x10, 0x28, 0x44},
+              {0x0C, 0x50, 0x50, 0x50, 0x3C},
+              {0x44, 0x64, 0x54, 0x4C, 0x44},
+              {0x00, 0x08, 0x36, 0x41, 0x00},
+              {0x00, 0x00, 0x7F, 0x00, 0x00},
+              {0x00, 0x41, 0x36, 0x08, 0x00},
+              {0x02, 0x01, 0x02, 0x04, 0x02}
+              };
+
+          static TInt gTextR = 0, gTextG = 200, gTextB = 70;
+
+          static void SetTextColor(CWindowGc& aGc, TInt aR, TInt aG, TInt aB)
+              {
+              gTextR = aR; gTextG = aG; gTextB = aB;
+              aGc.SetPenColor(TRgb(aR, aG, aB));
               }
-          
+
+          static TInt TextWidth(const char* aText, TInt aScale)
+              {
+              TInt n = 0;
+              while (aText[n])
+                  {
+                  ++n;
+                  }
+              return n * 6 * aScale;
+              }
+
+          // aTopY = top of the glyph, aRight = clip column (characters that do not fit completely are dropped)
+          static void DrawGlyphs(CWindowGc& aGc, const char* aText, TInt aX, TInt aTopY, TInt aScale, TInt aRight)
+              {
+              aGc.SetPenStyle(CGraphicsContext::ENullPen);
+              aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+              aGc.SetBrushColor(TRgb(gTextR, gTextG, gTextB));
+              for (; *aText; ++aText, aX += 6 * aScale)
+                  {
+                  if (aX + 5 * aScale > aRight)
+                      {
+                      break;
+                      }
+                  unsigned c = (unsigned char)*aText;
+                  if (c < 32 || c > 126)
+                      {
+                      c = '?';
+                      }
+                  const unsigned char* g = kFont5x7[c - 32];
+                  for (TInt col = 0; col < 5; ++col)
+                      {
+                      TInt row = 0;
+                      while (row < 7)
+                          {
+                          if (!(g[col] & (1 << row)))
+                              {
+                              ++row;
+                              continue;
+                              }
+                          TInt start = row;
+                          while (row < 7 && (g[col] & (1 << row)))
+                              {
+                              ++row;
+                              }
+                          const TInt x0 = aX + col * aScale;
+                          const TInt y0 = aTopY + start * aScale;
+                          aGc.DrawRect(TRect(x0, y0, x0 + aScale, aTopY + row * aScale));
+                          }
+                      }
+                  }
+              aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+              aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+              }
+
           static void CrtTraceCb(int aStep, int aA, int aB)
               {
               ILOG(_L("CRT step=%d a=%d b=%d"), aStep, aA, aB);
-              }
-
-          static void ToDes(TDes& aDst, const char* aSrc)
-              {
-              TPtrC8 p((const TUint8*)aSrc);
-              aDst.Copy(p.Left(aDst.MaxLength()));
               }
 
           // ---------------------------------------------------------------------------
@@ -3691,9 +3838,8 @@ jobs:
           // ---------------------------------------------------------------------------
           void CImlacContainer::DrawStr(CWindowGc& aGc, const char* aText, TInt aX, TInt aBaseline) const
               {
-              TBuf<32> t;
-              ToDes(t, aText);
-              aGc.DrawText(t, TPoint(aX, aBaseline));
+              const TInt scale = Max(1, iPanel.Width() >= iPanel.Height() ? iPanel.Width() / 120 : iPanel.Width() / 240);
+              DrawGlyphs(aGc, aText, aX, aBaseline - 7 * scale, scale, Rect().iBr.iX);
               }
 
           void CImlacContainer::DrawCrt(CWindowGc& aGc) const
@@ -3714,18 +3860,13 @@ jobs:
 
           void CImlacContainer::DrawPanel(CWindowGc& aGc) const
               {
-              const CFont* font = PickFont(iEikonEnv ? iEikonEnv->AnnotationFont() : NULL);
-              if (!font)
-                  {
-                  return;                         // no usable font: skip the status text, the CRT still works
-                  }
-              aGc.UseFont(font);
-              const TInt lh = font->HeightInPixels() + 2;
+              const TInt S = Max(1, iPanel.Width() >= iPanel.Height() ? iPanel.Width() / 120 : iPanel.Width() / 240);
+              const TInt lh = 9 * S + 2;
               const TInt x = iPanel.iTl.iX + 4;
               TInt y = iPanel.iTl.iY + lh;
               char line[24];
 
-              aGc.SetPenColor(TRgb(0, 200, 70));
+              SetTextColor(aGc, 0, 200, 70);
               str_set(line, sizeof(line), "FPS "); str_cat_int(line, sizeof(line), iFps, 0);
               DrawStr(aGc, line, x, y); y += lh;
               str_set(line, sizeof(line), "PC "); str_cat_hex(line, sizeof(line), (unsigned)iMachine.mp_pc, 4);
@@ -3736,7 +3877,7 @@ jobs:
               DrawStr(aGc, line, x, y); y += lh;
               str_set(line, sizeof(line), "L"); str_cat_int(line, sizeof(line), iMachine.mp_link, 0);
               str_cat(line, sizeof(line), iMachine.mp_run ? " RUN" : " HALT");
-              aGc.SetPenColor(iMachine.mp_run ? TRgb(0, 200, 70) : TRgb(200, 160, 0));
+              if (iMachine.mp_run) { SetTextColor(aGc, 0, 200, 70); } else { SetTextColor(aGc, 200, 160, 0); }
               DrawStr(aGc, line, x, y); y += lh;
 
               // network status + chat: second column in the wide (portrait) panel, below the stats otherwise
@@ -3751,15 +3892,14 @@ jobs:
                   nx = x;
                   ny = y + 4;
                   }
-              aGc.SetPenColor(iNet.isConnected() ? TRgb(0, 255, 100) : TRgb(180, 90, 0));
+              if (iNet.isConnected()) { SetTextColor(aGc, 0, 255, 100); } else { SetTextColor(aGc, 180, 90, 0); }
               DrawStr(aGc, iNetStatus, nx, ny);
-              aGc.SetPenColor(TRgb(0, 190, 70));
+              SetTextColor(aGc, 0, 190, 70);
               for (TInt i = 0; i < iChatCount; ++i)
                   {
                   ny += lh;
                   DrawStr(aGc, iChat[i], nx, ny);
                   }
-              aGc.DiscardFont();
               }
 
           TInt CImlacContainer::MenuRowH() const
@@ -3785,12 +3925,7 @@ jobs:
               aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
               aGc.SetBrushColor(TRgb(4, 20, 8));
               aGc.DrawRect(box);
-              const CFont* font = PickFont(iEikonEnv ? iEikonEnv->NormalFont() : NULL);
-              if (!font)
-                  {
-                  return;
-                  }
-              aGc.UseFont(font);
+              const TInt S = (rowH >= 20) ? 2 : 1;
               const TMenuPage& page = kPages[iMenuPage];
               for (TInt i = 0; i < page.iCount; ++i)
                   {
@@ -3798,18 +3933,15 @@ jobs:
                   if (i == iMenuSel)
                       {
                       aGc.SetPenStyle(CGraphicsContext::ENullPen);
+                      aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
                       aGc.SetBrushColor(TRgb(0, 80, 36));
                       aGc.DrawRect(row);
                       aGc.SetPenStyle(CGraphicsContext::ESolidPen);
                       }
-                  aGc.SetPenColor(TRgb(140, 255, 170));
-                  TBuf<32> label;
-                  ToDes(label, page.iItems[i].iLabel);
-                  TRect text(row.iTl.iX + 10, row.iTl.iY, row.iBr.iX, row.iBr.iY);
-                  aGc.DrawText(label, text, rowH / 2 + font->AscentInPixels() / 2 - 1, CGraphicsContext::ELeft, 0);
+                  if (i == iMenuSel) { SetTextColor(aGc, 200, 255, 215); } else { SetTextColor(aGc, 140, 255, 170); }
+                  DrawGlyphs(aGc, page.iItems[i].iLabel, row.iTl.iX + 10, row.iTl.iY + (rowH - 7 * S) / 2, S, row.iBr.iX - 4);
                   }
               aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
-              aGc.DiscardFont();
               }
 
           void CImlacContainer::Draw(const TRect& /*aRect*/) const
