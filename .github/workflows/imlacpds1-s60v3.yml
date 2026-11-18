@@ -605,6 +605,8 @@ jobs:
           // Brightness levels are quantised to 10 steps like the iOS renderer.
           #define CRT_BUCKETS 10
 
+          void (*g_crtTrace)(int, int, int) = 0;
+
           namespace {
 
           struct Ctx {
@@ -675,8 +677,11 @@ jobs:
           }
 
           void CrtRenderer::render(u32* px, int w, int h, int stride, const Machine& m) {
+              CRT_TRACE(1, w, h);
+              CRT_TRACE(2, stride, (int)(unsigned long)px);
               // 1) phosphor decay: every channel *= 217/256 (~0.85, same as the 0.15 black fill on iOS)
               for (int y = 0; y < h; y++) {
+                  if (g_crtTrace && (y % 60) == 0) CRT_TRACE(10, y, 0);
                   u32* row = px + y * stride;
                   for (int x = 0; x < w; x++) {
                       u32 v = row[x];
@@ -687,6 +692,7 @@ jobs:
                   }
               }
 
+              CRT_TRACE(3, 0, 0);
               // 2) colour tables per brightness bucket (green phosphor with a cool core)
               Ctx c;
               c.px = px; c.w = w; c.h = h; c.stride = stride;
@@ -697,21 +703,27 @@ jobs:
                   c.corner[k] = packRGB(0, (a * 45) / 10, (a * 11) / 10);
               }
 
+              CRT_TRACE(4, 0, 0);
               // 3) vectors
               const int sxn = w - 1, syn = h - 1;
               const int n = m.nvec < MACHINE_MAX_VEC ? m.nvec : MACHINE_MAX_VEC;
+              CRT_TRACE(5, n, m.nvec);
               for (int i = 0; i < n; i++) {
                   const MachineVec& v = m.vecs[i];
+                  CRT_TRACE(6, i, (int)v.bright);
                   int k = ((int)v.bright * CRT_BUCKETS + 127) / 255;     // 0..10
                   if (k < 1) continue;                                   // invisible
                   if (k > CRT_BUCKETS) k = CRT_BUCKETS;
                   k -= 1;
                   // PDS Y axis points up (CoreGraphics bitmap origin on iOS is bottom-left), screen rows grow downwards.
                   int x1 = ((int)v.x1 * sxn) >> 10, y1 = syn - (((int)v.y1 * syn) >> 10);
+                  CRT_TRACE(7, x1, y1);
                   if (v.isPoint) { drawPoint(c, x1, y1, k); continue; }
                   int x2 = ((int)v.x2 * sxn) >> 10, y2 = syn - (((int)v.y2 * syn) >> 10);
+                  CRT_TRACE(8, x2, y2);
                   drawLine(c, x1, y1, x2, y2, k);
               }
+              CRT_TRACE(9, 0, 0);
           }
           IMLAC_EOF
           mkdir -p src/core
@@ -727,6 +739,10 @@ jobs:
           #include "Machine.h"
 
           #define CRT_PDS 1024
+
+          // Optional trace hook (NULL = off). The front end sets it for the first frames to find crashes.
+          extern void (*g_crtTrace)(int step, int a, int b);
+          #define CRT_TRACE(s, a, b) do { if (g_crtTrace) g_crtTrace((s), (a), (b)); } while (0)
 
           class CrtRenderer {
           public:
@@ -3162,8 +3178,22 @@ jobs:
               return new CImlacApplication;
               }
 
+          #ifndef SYMBIAN_STUB_H
+          static void ImlacExcHandler(TExcType aType)
+              {
+              // 3 = access violation, 1 = general, 2 = kill ... (see TExcType in e32const.h)
+              ILOG(_L("EXCEPTION type=%d  (last log line above = where it happened)"), (TInt)aType);
+              ImlacLogClose();
+              User::Panic(_L("IMLAC-EXC"), (TInt)aType);
+              }
+          #endif
+
           GLDEF_C TInt E32Main()
               {
+          #ifndef SYMBIAN_STUB_H
+              TInt hr = User::SetExceptionHandler(ImlacExcHandler, KExceptionFault | KExceptionAbort);
+              ILOG(_L("SetExceptionHandler r=%d"), hr);
+          #endif
               ILOG(_L("E32Main start"));
               TInt r = EikStart::RunApplication(NewApplication);
               ILOG(_L("E32Main end r=%d"), r);
@@ -3322,6 +3352,11 @@ jobs:
               return env ? env->NormalFont() : NULL;
               }
           
+          static void CrtTraceCb(int aStep, int aA, int aB)
+              {
+              ILOG(_L("CRT step=%d a=%d b=%d"), aStep, aA, aB);
+              }
+
           static void ToDes(TDes& aDst, const char* aSrc)
               {
               TPtrC8 p((const TUint8*)aSrc);
@@ -3365,7 +3400,15 @@ jobs:
               User::LeaveIfError(iFrame->Create(TSize(KCrtW, KCrtH), EColor16MU));
               ILOG(_L("Container: bitmap created %dx%d"), KCrtW, KCrtH);
               iFrame->LockHeap();
-              CrtRenderer::clear((u32*)iFrame->DataAddress(), KCrtW, KCrtH, iFrame->DataStride() / 4);
+              {
+              u32* cpx = (u32*)iFrame->DataAddress();
+              const TInt cstride = iFrame->DataStride();
+              ILOG(_L("Container: initial clear px=0x%x strideBytes=%d"), (TUint)cpx, cstride);
+              if (cpx && cstride >= KCrtW * 4)
+                  {
+                  CrtRenderer::clear(cpx, KCrtW, KCrtH, cstride / 4);
+                  }
+              }
               iFrame->UnlockHeap();
 
               ILOG(_L("Container: frame cleared"));
@@ -3468,8 +3511,22 @@ jobs:
               iDemos.runCurrentDemo();
               if (trace) { ILOG(_L("Tick: render")); }
 
+              if (trace) { ILOG(_L("Tick: LockHeap, nvec=%d handle=%d"), iMachine.nvec, iFrame->Handle()); }
               iFrame->LockHeap();
-              CrtRenderer::render((u32*)iFrame->DataAddress(), KCrtW, KCrtH, iFrame->DataStride() / 4, iMachine);
+              u32* px = (u32*)iFrame->DataAddress();
+              const TInt strideBytes = iFrame->DataStride();
+              if (trace) { ILOG(_L("Tick: px=0x%x strideBytes=%d"), (TUint)px, strideBytes); }
+              if (px && strideBytes >= KCrtW * 4)
+                  {
+                  g_crtTrace = (tickN <= 2) ? CrtTraceCb : 0;     // per-vector trace for the first 2 frames
+                  CrtRenderer::render(px, KCrtW, KCrtH, strideBytes / 4, iMachine);
+                  g_crtTrace = 0;
+                  if (trace) { ILOG(_L("Tick: render returned")); }
+                  }
+              else if (trace)
+                  {
+                  ILOG(_L("Tick: bitmap data unavailable, render skipped"));
+                  }
               iFrame->UnlockHeap();
 
               if (trace) { ILOG(_L("Tick: render ok, paint (dirty=%d)"), (TInt)iPanelDirty); }
@@ -3482,6 +3539,7 @@ jobs:
                   iFpsStart = now;
                   }
 
+              if (trace) { ILOG(_L("Tick: before paint")); }
               if (iPanelDirty || ++iPanelTick >= KPanelEvery)
                   {
                   iPanelDirty = EFalse;
