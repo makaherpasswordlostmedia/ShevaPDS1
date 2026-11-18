@@ -190,6 +190,7 @@ jobs:
           SOURCE          imlac_app.cpp
           SOURCE          imlac_appui.cpp
           SOURCE          imlac_container.cpp
+          SOURCE          imlac_log.cpp
 
           SOURCEPATH      ../src/core
           SOURCE          Machine.cpp
@@ -222,7 +223,7 @@ jobs:
           END
 
           LIBRARY         euser.lib apparc.lib cone.lib eikcore.lib avkon.lib eikcoctl.lib eikdlg.lib
-          LIBRARY         fbscli.lib bitgdi.lib gdi.lib ws32.lib
+          LIBRARY         fbscli.lib bitgdi.lib gdi.lib ws32.lib efsrv.lib
 
           #ifdef IMLAC_NET
           // Open C: only for the BSD sockets in NetSession.cpp. The emulator core itself links no C library.
@@ -2920,6 +2921,7 @@ jobs:
           #include <e32base.h>
           #include <fbs.h>
 
+          #include "imlac_log.h"
           #include "Machine.h"
           #include "Demos.h"
           #include "CrtRender.h"
@@ -3048,6 +3050,90 @@ jobs:
           #endif
           IMLAC_EOF
           mkdir -p src/s60
+          cat > src/s60/imlac_log.h <<'IMLAC_EOF'
+          // imlac_log.h - tiny crash-hunting logger. Every line is flushed at once, so the LAST line in the file
+          // is the last step reached before a crash. Output goes to RDebug (EKA2L1 shows it in its log)
+          // and to <private dir>\\imlac_log.txt  (C:\\private\\A1A5C0DE\\imlac_log.txt).
+          #ifndef IMLAC_LOG_H
+          #define IMLAC_LOG_H
+          #ifdef SYMBIAN_STUB_H
+          // host type-check build (API stubs): logging compiles away
+          #define ILOG(...) ((void)0)
+          inline void ImlacLogClose() {}
+          #else
+          #include <e32std.h>
+
+          void ImlacLog(TRefByValue<const TDesC> aFmt, ...);
+          void ImlacLogClose();
+
+          #define ILOG ImlacLog
+          #endif
+          #endif
+          IMLAC_EOF
+          mkdir -p src/s60
+          cat > src/s60/imlac_log.cpp <<'IMLAC_EOF'
+          // imlac_log.cpp
+          #include <e32debug.h>
+          #include <f32file.h>
+          #include "imlac_log.h"
+
+          static RFs   gFs;
+          static RFile gFile;
+          static TInt  gState = 0;      // 0 not tried, 1 open, -1 failed
+          static TInt  gLine = 0;
+
+          static void OpenLog()
+              {
+              gState = -1;
+              if (gFs.Connect() != KErrNone)
+                  {
+                  return;
+                  }
+              gFs.CreatePrivatePath(EDriveC);
+              gFs.SetSessionToPrivate(EDriveC);
+              if (gFile.Replace(gFs, _L("imlac_log.txt"), EFileWrite | EFileShareAny) == KErrNone)
+                  {
+                  gState = 1;
+                  }
+              }
+
+          void ImlacLog(TRefByValue<const TDesC> aFmt, ...)
+              {
+              VA_LIST list;
+              VA_START(list, aFmt);
+              TBuf<200> line;
+              line.AppendFormatList(aFmt, list, NULL);
+              VA_END(list);
+
+              RDebug::Print(_L("IMLAC %S"), &line);
+
+              if (gState == 0)
+                  {
+                  OpenLog();
+                  }
+              if (gState == 1)
+                  {
+                  TBuf<220> full;
+                  full.Format(_L("%04d %S\r\n"), ++gLine, &line);
+                  TBuf8<220> out;
+                  out.Copy(full);
+                  gFile.Write(out);
+                  gFile.Flush();
+                  }
+              }
+
+          void ImlacLogClose()
+              {
+              if (gState == 1)
+                  {
+                  gFile.Close();
+                  gFs.Close();
+                  gState = -1;
+                  }
+              }
+          IMLAC_EOF
+
+          mkdir -p src/s60
           cat > src/s60/imlac_app.cpp <<'IMLAC_EOF'
           // Application / document / entry point.
           #include <eikstart.h>
@@ -3055,6 +3141,7 @@ jobs:
 
           CApaDocument* CImlacApplication::CreateDocumentL()
               {
+              ILOG(_L("CreateDocumentL"));
               return new (ELeave) CImlacDocument(*this);
               }
 
@@ -3065,17 +3152,23 @@ jobs:
 
           CEikAppUi* CImlacDocument::CreateAppUiL()
               {
+              ILOG(_L("CreateAppUiL"));
               return new (ELeave) CImlacAppUi;
               }
 
           LOCAL_C CApaApplication* NewApplication()
               {
+              ILOG(_L("NewApplication"));
               return new CImlacApplication;
               }
 
           GLDEF_C TInt E32Main()
               {
-              return EikStart::RunApplication(NewApplication);
+              ILOG(_L("E32Main start"));
+              TInt r = EikStart::RunApplication(NewApplication);
+              ILOG(_L("E32Main end r=%d"), r);
+              ImlacLogClose();
+              return r;
               }
           IMLAC_EOF
           mkdir -p src/s60
@@ -3091,7 +3184,9 @@ jobs:
 
           void CImlacAppUi::ConstructL()
               {
+              ILOG(_L("AppUi::ConstructL begin"));
               BaseConstructL(CAknAppUi::EAknEnableSkin);
+              ILOG(_L("AppUi: BaseConstructL ok"));
 
               CEikStatusPane* sp = StatusPane();
               if (sp)
@@ -3104,8 +3199,11 @@ jobs:
                   cba->MakeVisible(EFalse);
                   }
 
+              ILOG(_L("AppUi: sp=%d cba=%d, creating container"), (TInt)sp, (TInt)cba);
               iContainer = CImlacContainer::NewL(ApplicationRect());
+              ILOG(_L("AppUi: container created"));
               AddToStackL(iContainer);
+              ILOG(_L("AppUi::ConstructL done"));
               }
 
           CImlacAppUi::~CImlacAppUi()
@@ -3134,6 +3232,7 @@ jobs:
 
           void CImlacAppUi::HandleForegroundEventL(TBool aForeground)
               {
+              ILOG(_L("ForegroundEvent %d"), (TInt)aForeground);
               CAknAppUi::HandleForegroundEventL(aForeground);
               if (iContainer)
                   {
@@ -3212,6 +3311,17 @@ jobs:
               { kPageMain, 5 }, { kPageMachine, 6 }, { kPageDemos, 9 }, { kPageGame, 6 }
               };
 
+          // Font lookups can return NULL (emulators, missing font files): fall back, never dereference NULL.
+          static const CFont* PickFont(const CFont* aPreferred)
+              {
+              if (aPreferred)
+                  {
+                  return aPreferred;
+                  }
+              CEikonEnv* env = CEikonEnv::Static();
+              return env ? env->NormalFont() : NULL;
+              }
+          
           static void ToDes(TDes& aDst, const char* aSrc)
               {
               TPtrC8 p((const TUint8*)aSrc);
@@ -3245,20 +3355,26 @@ jobs:
 
           void CImlacContainer::ConstructL(const TRect& aRect)
               {
+              ILOG(_L("Container::ConstructL begin"));
               CreateWindowL();
+              ILOG(_L("Container: window created"));
               SetExtentToWholeScreen();
               SetFocusing(ETrue);
 
               iFrame = new (ELeave) CFbsBitmap;
               User::LeaveIfError(iFrame->Create(TSize(KCrtW, KCrtH), EColor16MU));
+              ILOG(_L("Container: bitmap created %dx%d"), KCrtW, KCrtH);
               iFrame->LockHeap();
               CrtRenderer::clear((u32*)iFrame->DataAddress(), KCrtW, KCrtH, iFrame->DataStride() / 4);
               iFrame->UnlockHeap();
 
+              ILOG(_L("Container: frame cleared"));
               iTimer = CPeriodic::NewL(CActive::EPriorityStandard);
 
               RandSeed(Math::Random());
+              ILOG(_L("Container: setDemo"));
               iDemos.setDemo(DemoTypeStar);
+              ILOG(_L("Container: setDemo ok"));
               iForeground = ETrue;
               iMenu = EFalse;
               iMenuPage = 0;
@@ -3268,9 +3384,13 @@ jobs:
               AddChat("SYS: LSK or * = menu");
               iFpsStart = User::NTickCount();
 
+              ILOG(_L("Container: SetRect %d,%d-%d,%d"), aRect.iTl.iX, aRect.iTl.iY, aRect.iBr.iX, aRect.iBr.iY);
               SetRect(aRect);
+              ILOG(_L("Container: ActivateL"));
               ActivateL();
+              ILOG(_L("Container: StartTimer"));
               StartTimer();
+              ILOG(_L("Container::ConstructL done"));
               }
 
           void CImlacContainer::StartTimer()
@@ -3315,6 +3435,10 @@ jobs:
 
           void CImlacContainer::Tick()
               {
+              static TInt tickN = 0;
+              const TBool trace = (tickN < 5);
+              if (trace) { ILOG(_L("Tick %d begin fg=%d menu=%d"), tickN, (TInt)iForeground, (TInt)iMenu); }
+              ++tickN;
               if (!iForeground || iDialog)
                   {
                   return;
@@ -3340,12 +3464,15 @@ jobs:
                       for (TInt j = 0; j < 50; ++j) iMachine.dpStep();
                       }
                   }
+              if (trace) { ILOG(_L("Tick: runCurrentDemo")); }
               iDemos.runCurrentDemo();
+              if (trace) { ILOG(_L("Tick: render")); }
 
               iFrame->LockHeap();
               CrtRenderer::render((u32*)iFrame->DataAddress(), KCrtW, KCrtH, iFrame->DataStride() / 4, iMachine);
               iFrame->UnlockHeap();
 
+              if (trace) { ILOG(_L("Tick: render ok, paint (dirty=%d)"), (TInt)iPanelDirty); }
               ++iFpsCount;
               TUint now = User::NTickCount();
               if (now - iFpsStart >= 1000)
@@ -3370,6 +3497,9 @@ jobs:
           // Draws only the CRT square straight into the window (no Draw() round trip, no panel text).
           void CImlacContainer::PaintCrt()
               {
+              static TInt n = 0;
+              if (n < 3) { ILOG(_L("PaintCrt %d"), n); }
+              ++n;
               ActivateGc();
               RWindow& win = Window();
               win.Invalidate(iCrtRect);
@@ -3386,6 +3516,8 @@ jobs:
           void CImlacContainer::SizeChanged()
               {
               ComputeLayout();
+              ILOG(_L("SizeChanged crt=%d,%d-%d,%d panel=%d,%d-%d,%d"), iCrtRect.iTl.iX, iCrtRect.iTl.iY, iCrtRect.iBr.iX, iCrtRect.iBr.iY,
+                   iPanel.iTl.iX, iPanel.iTl.iY, iPanel.iBr.iX, iPanel.iBr.iY);
               }
 
           void CImlacContainer::ComputeLayout()
@@ -3416,6 +3548,10 @@ jobs:
 
           void CImlacContainer::DrawCrt(CWindowGc& aGc) const
               {
+              if (!iFrame)
+                  {
+                  return;
+                  }
               if (iCrtRect.Width() == KCrtW && iCrtRect.Height() == KCrtH)
                   {
                   aGc.BitBlt(iCrtRect.iTl, iFrame);               // 1:1, the fast path on 240x320 / 320x240 phones
@@ -3428,7 +3564,11 @@ jobs:
 
           void CImlacContainer::DrawPanel(CWindowGc& aGc) const
               {
-              const CFont* font = iEikonEnv->AnnotationFont();
+              const CFont* font = PickFont(iEikonEnv ? iEikonEnv->AnnotationFont() : NULL);
+              if (!font)
+                  {
+                  return;                         // no usable font: skip the status text, the CRT still works
+                  }
               aGc.UseFont(font);
               const TInt lh = font->HeightInPixels() + 2;
               const TInt x = iPanel.iTl.iX + 4;
@@ -3495,7 +3635,11 @@ jobs:
               aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
               aGc.SetBrushColor(TRgb(4, 20, 8));
               aGc.DrawRect(box);
-              const CFont* font = iEikonEnv->NormalFont();
+              const CFont* font = PickFont(iEikonEnv ? iEikonEnv->NormalFont() : NULL);
+              if (!font)
+                  {
+                  return;
+                  }
               aGc.UseFont(font);
               const TMenuPage& page = kPages[iMenuPage];
               for (TInt i = 0; i < page.iCount; ++i)
@@ -3520,6 +3664,9 @@ jobs:
 
           void CImlacContainer::Draw(const TRect& /*aRect*/) const
               {
+              static TInt dn = 0;
+              if (dn < 3) { ILOG(_L("Draw %d frame=%d"), dn, (TInt)iFrame); }
+              ++dn;
               CWindowGc& gc = SystemGc();
               gc.SetPenStyle(CGraphicsContext::ESolidPen);
               gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
@@ -3528,7 +3675,9 @@ jobs:
               gc.SetBrushStyle(CGraphicsContext::ENullBrush);
 
               DrawCrt(gc);
+              if (dn <= 3) { ILOG(_L("Draw: crt ok, panel")); }
               DrawPanel(gc);
+              if (dn <= 3) { ILOG(_L("Draw: panel ok")); }
 
               if (iMenu)
                   {
