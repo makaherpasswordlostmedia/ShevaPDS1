@@ -69,7 +69,7 @@ jobs:
             the status text is redrawn about twice a second
           * Maze War is integer-only: brightness 0..255, bullets in Q8 fixed point, circles from a Q14 sine table.
             `MazeWar.o` has no floating-point code at all (the S60v3 CPUs have no FPU, so every float op was a library call)
-          * no `-fno-tree-loop-distribute-patterns` (GCCE 4.4.1 does not know it), plain `/epoc32/include` paths
+          * no `-fno-tree-loop-distribute-patterns` (GCCE 4.4.1 does not know it), layered SDK include paths via `APP_LAYER_SYSTEMINCLUDE`
 
           ## Host checks
           `bash host_test/run_tests.sh` - freestanding build of the core, ASan/UBSan smoke tests, preview PNG, and a
@@ -168,6 +168,7 @@ jobs:
           // Imlac PDS-1 emulator for S60 3rd Edition (Symbian OS 9.1 - 9.3, Nokia N73/N95/E51/E71/6120 ...).
           // Keypad driven, no touch. Built with GCCE for armv5 (EKA2).
           #include "imlac_config.hrh"
+          #include <platform_paths.hrh>
 
           TARGET          imlacpds1.exe
           TARGETTYPE      exe
@@ -202,7 +203,13 @@ jobs:
 
           USERINCLUDE     ../src/s60
           USERINCLUDE     ../src/core
+          // Avkon/Uikon headers live in the layered dirs (mw, app, platform) of this SDK, not in plain /epoc32/include
+          APP_LAYER_SYSTEMINCLUDE
           SYSTEMINCLUDE   /epoc32/include
+          SYSTEMINCLUDE   /epoc32/include/mw
+          SYSTEMINCLUDE   /epoc32/include/platform
+          SYSTEMINCLUDE   /epoc32/include/platform/mw
+          SYSTEMINCLUDE   /epoc32/include/app
 
           SOURCEPATH      ../data
           START RESOURCE  imlacpds1.rss
