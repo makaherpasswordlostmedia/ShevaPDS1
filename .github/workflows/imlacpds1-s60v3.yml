@@ -201,6 +201,7 @@ jobs:
           SOURCE          Rand.cpp
           SOURCE          VecFont.cpp
           SOURCE          FMath.cpp
+          SOURCE          aeabi_div.cpp
 
           USERINCLUDE     ../src/s60
           USERINCLUDE     ../src/core
@@ -3149,6 +3150,85 @@ jobs:
               }
           IMLAC_EOF
 
+          mkdir -p src/core
+          cat > src/core/aeabi_div.cpp <<'IMLAC_EOF'
+          // aeabi_div.cpp - own integer division helpers for the ARM/GCCE build.
+          //
+          // On ARMv5 (Thumb) GCC turns every "/" and "%" into a call to __aeabi_idiv / __aeabi_uidiv / ...
+          // which normally come from drtaeabi.dll. Some firmwares/emulators (EKA2L1 logs "Invalid ordinal 222/223,
+          // requested from drtaeabi.dll") do not provide them, the call lands on address 0 and the app dies at the
+          // first division. Defining the helpers here makes the exe self-contained. Shift/subtract only: no
+          // division inside, no libc, no libgcc.
+          #ifdef __SYMBIAN32__
+
+          typedef unsigned int  imlac_u32;
+          typedef unsigned long long imlac_u64;
+
+          static imlac_u32 imlacUDivMod(imlac_u32 n, imlac_u32 d, imlac_u32* aRem)
+              {
+              imlac_u32 q = 0, r = 0;
+              if (d == 0)
+                  {
+                  *aRem = 0;
+                  return 0;
+                  }
+              for (int i = 31; i >= 0; --i)
+                  {
+                  imlac_u32 carry = r >> 31;
+                  r = (r << 1) | ((n >> i) & 1u);
+                  if (carry || r >= d)
+                      {
+                      r -= d;
+                      q |= (1u << i);
+                      }
+                  }
+              *aRem = r;
+              return q;
+              }
+
+          extern "C" {
+
+          imlac_u32 __aeabi_uidiv(imlac_u32 n, imlac_u32 d)
+              {
+              imlac_u32 r;
+              return imlacUDivMod(n, d, &r);
+              }
+
+          // 64-bit return = r0 (quotient) / r1 (remainder), exactly what the EABI wants for *divmod
+          imlac_u64 __aeabi_uidivmod(imlac_u32 n, imlac_u32 d)
+              {
+              imlac_u32 r;
+              imlac_u32 q = imlacUDivMod(n, d, &r);
+              return ((imlac_u64)r << 32) | q;
+              }
+
+          int __aeabi_idiv(int n, int d)
+              {
+              imlac_u32 un = n < 0 ? 0u - (imlac_u32)n : (imlac_u32)n;
+              imlac_u32 ud = d < 0 ? 0u - (imlac_u32)d : (imlac_u32)d;
+              imlac_u32 r;
+              imlac_u32 q = imlacUDivMod(un, ud, &r);
+              return ((n < 0) != (d < 0)) ? (int)(0u - q) : (int)q;
+              }
+
+          long long __aeabi_idivmod(int n, int d)
+              {
+              imlac_u32 un = n < 0 ? 0u - (imlac_u32)n : (imlac_u32)n;
+              imlac_u32 ud = d < 0 ? 0u - (imlac_u32)d : (imlac_u32)d;
+              imlac_u32 r;
+              imlac_u32 q = imlacUDivMod(un, ud, &r);
+              imlac_u32 sq = ((n < 0) != (d < 0)) ? 0u - q : q;
+              imlac_u32 sr = (n < 0) ? 0u - r : r;          // remainder takes the sign of the dividend
+              return (long long)(((imlac_u64)sr << 32) | sq);
+              }
+
+          int __aeabi_idiv0(int aVal) { return aVal; }
+
+          }  // extern "C"
+
+          #endif
+          IMLAC_EOF
+
           mkdir -p src/s60
           cat > src/s60/imlac_app.cpp <<'IMLAC_EOF'
           // Application / document / entry point.
@@ -3193,6 +3273,18 @@ jobs:
           #ifndef SYMBIAN_STUB_H
               TInt hr = User::SetExceptionHandler(ImlacExcHandler, KExceptionFault | KExceptionAbort);
               ILOG(_L("SetExceptionHandler r=%d"), hr);
+              {
+              // integer division self-test: if the app dies right after "DIVTEST begin", division is the culprit
+              volatile TInt a = 255, b = 17, c = -255, d = 16;
+              volatile TUint ua = 1000003u, ub = 97u;
+              ILOG(_L("DIVTEST begin"));
+              TInt q1 = a / b;  TInt r1 = a % b;
+              ILOG(_L("DIVTEST signed   255/17 = %d rem %d (expect 15 rem 0)"), q1, r1);
+              TInt q2 = c / d;  TInt r2 = c % d;
+              ILOG(_L("DIVTEST negative -255/16 = %d rem %d (expect -15 rem -15)"), q2, r2);
+              TUint q3 = ua / ub;  TUint r3 = ua % ub;
+              ILOG(_L("DIVTEST unsigned 1000003/97 = %u rem %u (expect 10309 rem 30)"), q3, r3);
+              }
           #endif
               ILOG(_L("E32Main start"));
               TInt r = EikStart::RunApplication(NewApplication);
